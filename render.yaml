@@ -1,0 +1,35 @@
+services:
+  # ── Public HTTP service: API Gateway ────────────────────────────────────────
+  - type: web
+    name: chatagent-api-gateway
+    runtime: node
+    buildCommand: >-
+      pnpm install --frozen-lockfile --prod=false &&
+      pnpm  build
+    startCommand: node dist/main.js
+    envVars:
+      - key: NODE_ENV
+        value: production
+      - key: PORT
+        value: 4000
+      # Secrets — set in Render → chatagent-api-gateway → Settings → Environment
+      - key: DATABASE_URL
+        sync: false
+      - key: REDIS_URL
+        sync: false
+      - key: AUTH_GOOGLE_ID
+        sync: false
+      - key: AUTH_GOOGLE_SECRET
+        sync: false
+      - key: JWT_SECRET
+        sync: false
+      - key: JWT_SECRET_EXPIRATION
+        sync: false
+      - key: AES_KEY
+        sync: false
+      - key: CLOUDINARY_URL
+        sync: false
+      - key: CLOUDINARY_SIGNATURE_EXPIRATION
+        sync: false
+      - key: NEXT_PUBLIC_APP_URL
+        sync: false
