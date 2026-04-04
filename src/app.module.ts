@@ -1,7 +1,7 @@
 import * as Joi from 'joi';
 
 import { Module, ValidationPipe } from '@nestjs/common';
-import { ConfigModule } from '@nestjs/config';
+import { ConfigModule, ConfigService } from '@nestjs/config';
 import { APP_FILTER, APP_GUARD, APP_PIPE } from '@nestjs/core';
 import { ThrottlerGuard, ThrottlerModule } from '@nestjs/throttler';
 
@@ -16,6 +16,7 @@ import { CommonModule } from './common/common.module';
 import { AuthModule } from './auth/auth.module';
 import { RoomsModule } from './rooms/rooms.module';
 import { GatewayModule } from './gateway/gateway.module';
+import { BullModule } from '@nestjs/bullmq';
 
 @Module({
   imports: [
@@ -60,6 +61,17 @@ import { GatewayModule } from './gateway/gateway.module';
           req: (req) => ({ method: req.method, url: req.url }),
           res: (res) => ({ statusCode: res.statusCode }),
         },
+      },
+    }),
+    BullModule.forRootAsync({
+      inject: [ConfigService],
+      imports: [ConfigModule],
+      useFactory: (configService: ConfigService) => {
+        return {
+          connection: {
+            url: configService.getOrThrow('REDIS_URL'),
+          },
+        };
       },
     }),
 

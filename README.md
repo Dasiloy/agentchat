@@ -4,6 +4,15 @@ A real-time team workspace backend with an on-demand AI assistant. Built with Ne
 
 ---
 
+## 👑 Chief Contributor
+
+| ![dasiloy](https://avatars.githubusercontent.com/dasiloy?v=4&s=150) |
+| :-----------------------------------------------------------------: |
+|              **[dasiloy](https://github.com/dasiloy)**              |
+|                    _Lead Architect / Developer_                     |
+
+---
+
 ## Architecture Overview
 
 ```
@@ -171,7 +180,7 @@ pnpm test:cov      # coverage report
 
 **API Base URL:** `https://chatagent.onrender.com`
 **API Documentation:** `https://chatagent.onrender.com/docs`
-**Test Client:** Open `test-client/index.html` in your browser ///?
+**Test Client:** Open `https://chatagent.onrender.com`
 
 ### Test Credentials
 
@@ -182,8 +191,8 @@ pnpm test:cov      # coverage report
 
 ### Testing Real-Time Features
 
-1. Open `test-client/index.html` in **Tab 1** → Login as Alice ///?
-2. Open `test-client/index.html` in **Tab 2 (Incognito)** → Login as Bob ///?
+1. Open `https://chatagent.onrender.com` in **Tab 1** → Login as Alice
+2. Open `https://chatagent.onrender.com` in **Tab 2 (Incognito)** → Login as Bob
 3. Alice creates a room and invites Bob via email
 4. Both users join the room
 
@@ -197,29 +206,6 @@ pnpm test:cov      # coverage report
 - [ ] Both type `@ai` questions simultaneously → both answered in order
 - [ ] Alice sends a voice message → both see transcript when ready
 - [ ] Close and reopen Alice's tab → full message history loads
-
-### WebSocket Testing (Swagger/Manual)
-
-Connect to `wss://chatagent.onrender.com` with: ///?
-
-```json
-{ "auth": { "token": "your-jwt-token" } }
-```
-
-Example events:
-
-```json
-// Join a room
-{ "event": "join_room", "data": { "roomId": "room_id_here" } }
-
-// Send a message
-{ "event": "send_message", "data": { "roomId": "room_id", "content": "Hello!" } }
-
-// Invoke AI
-{ "event": "send_message", "data": { "roomId": "room_id", "content": "@ai explain Redis TTL" } }
-```
-
----
 
 ## API Reference
 
