@@ -1,0 +1,130 @@
+// This is your Prisma schema file,
+// learn more about it in the docs: https://pris.ly/d/prisma-schema
+
+// Get a free hosted Postgres database in seconds: `npx create-db`
+
+generator client {
+  provider = "prisma-client"
+  output   = "../src/generated/prisma"
+}
+
+datasource db {
+  provider = "postgresql"
+}
+
+enum RoomType {
+  CHANNEL
+  DM
+}
+
+enum MemberRole {
+  OWNER
+  MEMBER
+}
+
+enum MessageType {
+  TEXT
+  VOICE
+  AI
+}
+
+enum AccountProvider {
+  GOOGLE
+  GITHUB
+  APPLE
+  LOCAL
+}
+
+model User {
+  id             String   @id @default(cuid())
+  email          String   @unique // constraints plus index
+  name           String
+  avatar         String?
+  hashedPassword String? // null for OAuth users
+  lastSeenAt     DateTime?
+  createdAt      DateTime @default(now())
+  updatedAt      DateTime @updatedAt
+
+  accounts    Account[]
+  memberships RoomMember[]
+  messages    Message[]
+  receipts    MessageReceipt[]
+}
+
+model Account {
+  id                String          @id @default(cuid())
+  userId            String
+  provider          AccountProvider
+  providerAccountId String
+  refreshToken      String?         @db.Text // encrypted at rest
+  accessToken       String?         @db.Text // encrypted at rest
+  expiresAt         Int?
+  user              User            @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  // time stamps
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@unique([provider, providerAccountId])
+}
+
+model Room {
+  id             String   @id @default(cuid())
+  name           String? // null for DM rooms
+  description    String?
+  type           RoomType @default(CHANNEL)
+  isPrivate      Boolean  @default(true)
+  createdBy      String?
+  memberCount    Int      @default(0)
+  contextSummary String? // rolling AI context summary
+  createdAt      DateTime @default(now())
+  updatedAt      DateTime @updatedAt
+
+  members  RoomMember[]
+  messages Message[]
+}
+
+model RoomMember {
+  roomId   String
+  userId   String
+  role     MemberRole @default(MEMBER)
+  joinedAt DateTime   @default(now())
+
+  room Room @relation(fields: [roomId], references: [id], onDelete: Cascade)
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@id([roomId, userId]) // compund id, so a user cant be invited to a room twice
+  @@index([userId])
+}
+
+model Message {
+  id        String      @id @default(cuid())
+  roomId    String
+  userId    String? // null for AI messages
+  content   String
+  type      MessageType @default(TEXT)
+  audioUrl  String?
+  metadata  Json? // { invokedBy?, contextSize?, model?, audioDuration? }
+  createdAt DateTime    @default(now())
+
+  room     Room             @relation(fields: [roomId], references: [id], onDelete: Cascade)
+  user     User?            @relation(fields: [userId], references: [id], onDelete: SetNull)
+  receipts MessageReceipt[]
+
+  @@index([roomId, createdAt(sort: Desc)])
+  @@index([userId])
+}
+
+model MessageReceipt {
+  id          String    @id @default(cuid())
+  messageId   String
+  userId      String
+  deliveredAt DateTime?
+  readAt      DateTime?
+
+  message Message @relation(fields: [messageId], references: [id], onDelete: Cascade)
+  user    User    @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+@@unique([messageId, userId])
+@@index([userId, readAt])
+}

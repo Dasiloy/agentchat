@@ -1,0 +1,1429 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>Agentchat Test Client</title>
+    <script src="https://cdn.socket.io/4.7.5/socket.io.min.js"></script>
+    <style>
+      *,
+      *::before,
+      *::after {
+        box-sizing: border-box;
+        margin: 0;
+        padding: 0;
+      }
+      body {
+        font-family: system-ui, sans-serif;
+        background: #0f0f0f;
+        color: #e8e8e8;
+        height: 100vh;
+        display: flex;
+        flex-direction: column;
+      }
+      button {
+        cursor: pointer;
+        border: none;
+        border-radius: 6px;
+        padding: 8px 16px;
+        font-size: 14px;
+        font-weight: 500;
+        transition: opacity 0.15s;
+      }
+      button:hover {
+        opacity: 0.85;
+      }
+      button:disabled {
+        opacity: 0.4;
+        cursor: not-allowed;
+      }
+      input {
+        background: #1e1e1e;
+        border: 1px solid #333;
+        border-radius: 6px;
+        padding: 8px 12px;
+        color: #e8e8e8;
+        font-size: 14px;
+        width: 100%;
+      }
+      input:focus {
+        outline: none;
+        border-color: #7c9ef8;
+      }
+
+      /* Layout */
+      #app {
+        display: flex;
+        flex: 1;
+        overflow: hidden;
+      }
+      #sidebar {
+        width: 280px;
+        background: #151515;
+        border-right: 1px solid #222;
+        display: flex;
+        flex-direction: column;
+        overflow-y: auto;
+        overflow-x: hidden;
+      }
+      #main {
+        flex: 1;
+        display: flex;
+        flex-direction: column;
+        overflow: hidden;
+      }
+
+      /* Sidebar sections */
+      .sidebar-section {
+        padding: 14px 16px;
+        border-bottom: 1px solid #1e1e1e;
+      }
+      .sidebar-section h3 {
+        font-size: 10px;
+        text-transform: uppercase;
+        letter-spacing: 0.08em;
+        color: #555;
+        margin-bottom: 10px;
+      }
+
+      /* Auth panel */
+      #auth-panel .tabs {
+        display: flex;
+        gap: 4px;
+        margin-bottom: 10px;
+      }
+      #auth-panel .tab {
+        background: #1e1e1e;
+        color: #555;
+        padding: 5px 12px;
+        border-radius: 4px;
+        font-size: 13px;
+        border: 1px solid transparent;
+      }
+      #auth-panel .tab.active {
+        background: #1a2a4a;
+        color: #7c9ef8;
+        border-color: #7c9ef8;
+      }
+      #auth-panel .fields {
+        display: flex;
+        flex-direction: column;
+        gap: 7px;
+      }
+      #auth-panel .fields input {
+        font-size: 13px;
+      }
+      #auth-status {
+        font-size: 12px;
+        margin-top: 6px;
+      }
+      .status-ok {
+        color: #4ade80;
+      }
+      .status-err {
+        color: #f87171;
+      }
+      #google-btn {
+        background: #fff;
+        color: #222;
+        display: flex;
+        align-items: center;
+        gap: 8px;
+        justify-content: center;
+        width: 100%;
+        margin-top: 8px;
+        font-size: 13px;
+      }
+      #user-card {
+        display: none;
+        flex-direction: row;
+        align-items: center;
+        gap: 8px;
+      }
+      #user-card .avatar {
+        width: 32px;
+        height: 32px;
+        border-radius: 50%;
+        background: #7c9ef8;
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        font-weight: 700;
+        font-size: 14px;
+        color: #000;
+        flex-shrink: 0;
+      }
+      #user-card .info {
+        flex: 1;
+        min-width: 0;
+      }
+      #user-card .uname {
+        font-size: 13px;
+        font-weight: 600;
+        white-space: nowrap;
+        overflow: hidden;
+        text-overflow: ellipsis;
+      }
+      #user-card .uemail {
+        font-size: 11px;
+        color: #555;
+        white-space: nowrap;
+        overflow: hidden;
+        text-overflow: ellipsis;
+      }
+      #logout-btn {
+        background: #2a1515;
+        color: #f87171;
+        font-size: 11px;
+        padding: 4px 8px;
+        flex-shrink: 0;
+      }
+
+      /* Rooms list */
+      #rooms-panel {
+        display: none;
+        flex-direction: column;
+        flex: 1;
+        overflow: hidden;
+      }
+      #rooms-panel.visible {
+        display: flex;
+      }
+      #rooms-signin {
+        color: #444;
+        font-size: 12px;
+      }
+      .create-row {
+        display: flex;
+        gap: 6px;
+        margin-bottom: 10px;
+      }
+      .create-row input {
+        font-size: 13px;
+      }
+      .create-row button {
+        background: #7c9ef8;
+        color: #000;
+        font-size: 13px;
+        padding: 8px 10px;
+        flex-shrink: 0;
+      }
+      #rooms-scroll {
+        flex: 1;
+        overflow-y: auto;
+        display: flex;
+        flex-direction: column;
+        gap: 3px;
+      }
+      .room-row {
+        display: flex;
+        align-items: center;
+        gap: 6px;
+        padding: 8px 10px;
+        border-radius: 6px;
+        background: #1a1a1a;
+        cursor: pointer;
+      }
+      .room-row:hover,
+      .room-row.active {
+        background: #222;
+      }
+      .room-row.active {
+        border-left: 2px solid #7c9ef8;
+      }
+      .room-row .rname {
+        flex: 1;
+        font-size: 13px;
+        font-weight: 500;
+        white-space: nowrap;
+        overflow: hidden;
+        text-overflow: ellipsis;
+      }
+      .room-row .rmeta {
+        font-size: 11px;
+        color: #444;
+        white-space: nowrap;
+      }
+      .badge {
+        background: #7c9ef8;
+        color: #000;
+        font-size: 10px;
+        font-weight: 700;
+        border-radius: 10px;
+        padding: 1px 5px;
+      }
+      #rooms-empty {
+        font-size: 12px;
+        color: #444;
+        text-align: center;
+        padding: 20px 0;
+      }
+
+      /* Main panel states */
+      #main-placeholder {
+        flex: 1;
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        color: #2a2a2a;
+        font-size: 14px;
+      }
+
+      /* Room detail */
+      #room-detail {
+        display: none;
+        flex: 1;
+        flex-direction: column;
+        overflow: hidden;
+      }
+      #room-detail.visible {
+        display: flex;
+      }
+      #room-header {
+        padding: 14px 20px;
+        border-bottom: 1px solid #1e1e1e;
+        display: flex;
+        align-items: center;
+        gap: 10px;
+      }
+      #room-header .rh-name {
+        font-size: 16px;
+        font-weight: 600;
+        flex: 1;
+      }
+      #room-header .rh-meta {
+        font-size: 12px;
+        color: #555;
+      }
+      #room-header .rh-type {
+        font-size: 10px;
+        background: #1e1e1e;
+        color: #666;
+        padding: 2px 7px;
+        border-radius: 4px;
+      }
+      #room-actions {
+        padding: 16px 20px;
+        display: flex;
+        flex-direction: column;
+        gap: 16px;
+        border-bottom: 1px solid #1e1e1e;
+      }
+      .action-group {
+        display: flex;
+        flex-direction: column;
+        gap: 6px;
+      }
+      .action-group label {
+        font-size: 11px;
+        color: #555;
+        text-transform: uppercase;
+        letter-spacing: 0.06em;
+      }
+      .action-row {
+        display: flex;
+        gap: 6px;
+      }
+      .action-row input {
+        font-size: 13px;
+      }
+      .btn-invite {
+        background: #4ade80;
+        color: #000;
+        font-size: 13px;
+        padding: 8px 12px;
+        flex-shrink: 0;
+      }
+      .btn-remove {
+        background: #f87171;
+        color: #000;
+        font-size: 13px;
+        padding: 8px 12px;
+        flex-shrink: 0;
+      }
+      .btn-leave {
+        background: #2a2020;
+        color: #f87171;
+        font-size: 13px;
+      }
+      .btn-delete {
+        background: #7f1d1d;
+        color: #fca5a5;
+        font-size: 13px;
+      }
+      #chat-compose {
+        padding: 12px 20px;
+        border-top: 1px solid #1e1e1e;
+      }
+      #room-footer {
+        padding: 8px 20px 12px;
+        display: flex;
+        gap: 8px;
+      }
+      #chat-placeholder {
+        flex: 1;
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        color: #2a2a2a;
+        font-size: 13px;
+      }
+
+      /* Members list */
+      #members-bar {
+        padding: 10px 20px;
+        border-bottom: 1px solid #1e1e1e;
+        display: flex;
+        gap: 8px;
+        flex-wrap: wrap;
+        align-items: center;
+      }
+      #members-bar .mem-chip {
+        display: flex;
+        align-items: center;
+        gap: 5px;
+        background: #1a1a1a;
+        border-radius: 20px;
+        padding: 4px 10px 4px 4px;
+        font-size: 12px;
+        cursor: pointer;
+        border: 1px solid transparent;
+        transition: border-color 0.15s;
+      }
+      #members-bar .mem-chip:hover {
+        border-color: #7c9ef8;
+      }
+      #members-bar .mem-chip.self {
+        cursor: default;
+      }
+      #members-bar .mem-chip.self:hover {
+        border-color: transparent;
+      }
+      #members-bar .mem-avatar {
+        width: 22px;
+        height: 22px;
+        border-radius: 50%;
+        background: #7c9ef8;
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        font-size: 10px;
+        font-weight: 700;
+        color: #000;
+        flex-shrink: 0;
+      }
+      #members-bar .mem-avatar.owner {
+        background: #fbbf24;
+      }
+      #members-bar .mem-name {
+        color: #ccc;
+        max-width: 80px;
+        white-space: nowrap;
+        overflow: hidden;
+        text-overflow: ellipsis;
+      }
+
+      /* Toast */
+      #toast {
+        position: fixed;
+        bottom: 20px;
+        right: 20px;
+        background: #1e1e1e;
+        border: 1px solid #333;
+        border-radius: 8px;
+        padding: 10px 16px;
+        font-size: 13px;
+        display: none;
+        z-index: 999;
+        max-width: 320px;
+      }
+      #toast.error {
+        border-color: #7f1d1d;
+        color: #f87171;
+      }
+      #toast.success {
+        border-color: #14532d;
+        color: #4ade80;
+      }
+    </style>
+  </head>
+  <body>
+    <div id="app">
+      <!-- ── Sidebar ─────────────────────────────────────────────── -->
+      <div id="sidebar">
+        <!-- Auth section -->
+        <div class="sidebar-section" id="auth-panel">
+          <h3>Auth</h3>
+          <div id="logged-out">
+            <div class="tabs">
+              <button class="tab active" onclick="switchTab('login', this)">
+                Login
+              </button>
+              <button class="tab" onclick="switchTab('register', this)">
+                Register
+              </button>
+            </div>
+            <div class="fields">
+              <div id="name-field" style="display: none">
+                <input type="text" id="name" placeholder="Display name" />
+              </div>
+              <input type="email" id="email" placeholder="Email" />
+              <input type="password" id="password" placeholder="Password" />
+              <button
+                onclick="submitAuth()"
+                style="background: #7c9ef8; color: #000"
+                id="auth-submit-btn"
+              >
+                Login
+              </button>
+            </div>
+            <div id="auth-status"></div>
+            <button id="google-btn" onclick="googleLogin()">
+              <svg width="16" height="16" viewBox="0 0 24 24">
+                <path
+                  fill="#4285F4"
+                  d="M22.56 12.25c0-.78-.07-1.53-.2-2.25H12v4.26h5.92c-.26 1.37-1.04 2.53-2.21 3.31v2.77h3.57c2.08-1.92 3.28-4.74 3.28-8.09z"
+                />
+                <path
+                  fill="#34A853"
+                  d="M12 23c2.97 0 5.46-.98 7.28-2.66l-3.57-2.77c-.98.66-2.23 1.06-3.71 1.06-2.86 0-5.29-1.93-6.16-4.53H2.18v2.84C3.99 20.53 7.7 23 12 23z"
+                />
+                <path
+                  fill="#FBBC05"
+                  d="M5.84 14.09c-.22-.66-.35-1.36-.35-2.09s.13-1.43.35-2.09V7.07H2.18C1.43 8.55 1 10.22 1 12s.43 3.45 1.18 4.93l3.66-2.84z"
+                />
+                <path
+                  fill="#EA4335"
+                  d="M12 5.38c1.62 0 3.06.56 4.21 1.64l3.15-3.15C17.45 2.09 14.97 1 12 1 7.7 1 3.99 3.47 2.18 7.07l3.66 2.84c.87-2.6 3.3-4.53 6.16-4.53z"
+                />
+              </svg>
+              Continue with Google
+            </button>
+          </div>
+          <div id="logged-in" style="display: none">
+            <div id="user-card" style="display: flex">
+              <div class="avatar" id="user-avatar">?</div>
+              <div class="info">
+                <div class="uname" id="user-name">—</div>
+                <div class="uemail" id="user-email">—</div>
+              </div>
+              <button id="logout-btn" onclick="logout()">Sign out</button>
+            </div>
+          </div>
+        </div>
+
+        <!-- Rooms section -->
+        <div
+          class="sidebar-section"
+          style="
+            flex: 1;
+            overflow: hidden;
+            display: flex;
+            flex-direction: column;
+            padding-bottom: 0;
+          "
+        >
+          <h3>Rooms</h3>
+          <div id="rooms-signin" style="font-size: 12px; color: #444">
+            Sign in to load rooms
+          </div>
+          <div id="rooms-panel">
+            <div class="create-row">
+              <input
+                type="text"
+                id="new-room-name"
+                placeholder="New room name…"
+              />
+              <button id="create-room-btn" onclick="createRoom()">+</button>
+            </div>
+            <div id="rooms-scroll">
+              <div id="rooms-empty" style="display: none">No rooms yet.</div>
+            </div>
+          </div>
+        </div>
+
+        <!-- DM section -->
+        <div class="sidebar-section" id="dm-panel" style="display: none">
+          <h3>Direct Message</h3>
+          <div class="create-row">
+            <input type="email" id="dm-email" placeholder="user@example.com" />
+            <button
+              id="dm-btn"
+              onclick="openDm()"
+              style="
+                background: #7c9ef8;
+                color: #000;
+                font-size: 13px;
+                padding: 8px 10px;
+                flex-shrink: 0;
+              "
+            >
+              DM
+            </button>
+          </div>
+          <div id="dm-status" style="font-size: 12px; margin-top: 4px"></div>
+        </div>
+      </div>
+
+      <!-- ── Main ───────────────────────────────────────────────── -->
+      <div id="main">
+        <div id="main-placeholder">Sign in to start chatting</div>
+
+        <!-- Room detail (shown when a room is selected) -->
+        <div id="room-detail">
+          <div id="room-header">
+            <div>
+              <div class="rh-name" id="rh-name">—</div>
+              <div class="rh-meta">
+                <span id="rh-count">0</span> members ·
+                <span id="rh-type" class="rh-type">CHANNEL</span>
+              </div>
+            </div>
+          </div>
+
+          <div id="room-actions">
+            <!-- Invite by email (owner only) -->
+            <div class="action-group" id="action-invite" style="display: none">
+              <label>Invite member by email</label>
+              <div class="action-row">
+                <input
+                  type="email"
+                  id="invite-email"
+                  placeholder="user@example.com"
+                />
+                <button
+                  class="btn-invite"
+                  id="invite-btn"
+                  onclick="inviteUser()"
+                >
+                  Invite
+                </button>
+              </div>
+              <div id="invite-status" style="font-size: 12px"></div>
+            </div>
+
+            <!-- Remove member (owner only) -->
+            <div class="action-group" id="action-remove" style="display: none">
+              <label>Remove member by email</label>
+              <div class="action-row">
+                <input
+                  type="email"
+                  id="remove-email"
+                  placeholder="user@example.com"
+                />
+                <button
+                  class="btn-remove"
+                  id="remove-btn"
+                  onclick="removeMember()"
+                >
+                  Remove
+                </button>
+              </div>
+              <div id="remove-status" style="font-size: 12px"></div>
+            </div>
+          </div>
+
+          <div id="members-bar"></div>
+          <div id="chat-area" style="flex: 1; overflow-y: auto"></div>
+
+          <div id="chat-compose">
+            <div
+              id="typing-indicator"
+              style="
+                font-size: 12px;
+                color: #555;
+                min-height: 16px;
+                padding: 0 4px 4px;
+              "
+            ></div>
+            <div style="display: flex; gap: 8px; align-items: flex-end">
+              <textarea
+                id="chat-input"
+                placeholder="Type a message…"
+                style="
+                  flex: 1;
+                  resize: none;
+                  height: 40px;
+                  background: #1a1a1a;
+                  border: 1px solid #333;
+                  border-radius: 8px;
+                  padding: 10px 12px;
+                  color: #e8e8e8;
+                  font-size: 14px;
+                  font-family: inherit;
+                  line-height: 1.4;
+                "
+                onkeydown="onChatKeyDown(event)"
+                oninput="onChatInput(event)"
+              ></textarea>
+              <button
+                id="send-btn"
+                onclick="sendMessage()"
+                style="
+                  background: #7c9ef8;
+                  color: #000;
+                  padding: 10px 18px;
+                  border-radius: 8px;
+                  font-size: 14px;
+                  flex-shrink: 0;
+                "
+              >
+                Send
+              </button>
+            </div>
+          </div>
+
+          <div id="room-footer">
+            <button class="btn-leave" onclick="leaveRoom()" id="leave-btn">
+              Leave room
+            </button>
+            <button
+              class="btn-delete"
+              onclick="deleteRoom()"
+              id="delete-btn"
+              style="display: none"
+            >
+              Delete room
+            </button>
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <div id="toast"></div>
+
+    <script>
+      const API = '/api';
+
+      let token = null;
+      let currentUser = null;
+      let activeTab = 'login';
+      let activeRoom = null; // { id, name, type, memberCount, role, ... }
+      let socket = null; // Socket.io instance
+      const lastSeenId = new Map(); // roomId → id of newest message the client has
+      const roomMeta = new Map(); // roomId → { preview, unreadCount } for sidebar updates
+
+      // ── Boot ──────────────────────────────────────────────────────────────────
+      (function boot() {
+        const t = new URLSearchParams(location.search).get('token');
+        if (t) {
+          token = t;
+          localStorage.setItem('__dev_token', t);
+          history.replaceState({}, '', '/');
+        } else {
+          token = localStorage.getItem('__dev_token');
+        }
+        if (token) fetchMe();
+      })();
+
+      // ── Auth ──────────────────────────────────────────────────────────────────
+      function switchTab(tab, btn) {
+        activeTab = tab;
+        document
+          .querySelectorAll('#auth-panel .tab')
+          .forEach((b) => b.classList.remove('active'));
+        btn.classList.add('active');
+        document.getElementById('auth-submit-btn').textContent =
+          tab === 'login' ? 'Login' : 'Register';
+        document.getElementById('name-field').style.display =
+          tab === 'register' ? 'block' : 'none';
+        document.getElementById('auth-status').textContent = '';
+      }
+
+      async function submitAuth() {
+        const email = document.getElementById('email').value.trim();
+        const password = document.getElementById('password').value;
+        const name = document.getElementById('name').value.trim();
+        if (!email || !password)
+          return showStatus('Email and password required', 'err');
+        const endpoint =
+          activeTab === 'login' ? '/auth/login' : '/auth/register';
+        const body =
+          activeTab === 'register'
+            ? { email, password, name }
+            : { email, password };
+        const btn = document.getElementById('auth-submit-btn');
+        btn.disabled = true;
+        try {
+          const res = await fetch(`${API}${endpoint}`, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify(body),
+          });
+          const json = await res.json();
+          if (!res.ok)
+            return showStatus(json.message || 'Request failed', 'err');
+          token = json.data.accessToken;
+          localStorage.setItem('__dev_token', token);
+          await fetchMe();
+        } catch {
+          showStatus('Network error', 'err');
+        } finally {
+          btn.disabled = false;
+        }
+      }
+
+      function googleLogin() {
+        window.location.href = `${API}/auth/google`;
+      }
+
+      async function fetchMe() {
+        if (!token) return;
+        try {
+          const res = await fetch(`${API}/auth/me`, {
+            headers: { Authorization: `Bearer ${token}` },
+          });
+          if (!res.ok) {
+            token = null;
+            localStorage.removeItem('__dev_token');
+            return;
+          }
+          const json = await res.json();
+          currentUser = json.data;
+          showLoggedIn();
+          loadRooms();
+        } catch {
+          token = null;
+        }
+      }
+
+      async function logout() {
+        if (!token) return;
+        const btn = document.getElementById('logout-btn');
+        btn.disabled = true;
+        try {
+          await fetch(`${API}/auth/logout`, {
+            method: 'POST',
+            headers: { Authorization: `Bearer ${token}` },
+          });
+        } catch {
+        } finally {
+          btn.disabled = false;
+        }
+        token = null;
+        currentUser = null;
+        localStorage.removeItem('__dev_token');
+        showLoggedOut();
+        toast('Signed out', 'success');
+      }
+
+      // ── Rooms list ────────────────────────────────────────────────────────────
+      async function loadRooms() {
+        try {
+          const res = await fetch(`${API}/rooms`, {
+            headers: { Authorization: `Bearer ${token}` },
+          });
+          if (!res.ok) return;
+          const json = await res.json();
+          renderRooms(json.data || []);
+        } catch {}
+      }
+
+      function renderRooms(rooms) {
+        const scroll = document.getElementById('rooms-scroll');
+        const empty = document.getElementById('rooms-empty');
+        scroll.querySelectorAll('.room-row').forEach((el) => el.remove());
+
+        if (rooms.length === 0) {
+          empty.style.display = 'block';
+          return;
+        }
+        empty.style.display = 'none';
+
+        rooms.forEach((room) => {
+          // seed / refresh client-side meta
+          roomMeta.set(room.id, {
+            preview: room.lastMessage
+              ? trunc(room.lastMessage.content, 26)
+              : 'No messages',
+            unreadCount: room.unreadCount ?? 0,
+          });
+          const div = document.createElement('div');
+          div.className =
+            'room-row' + (activeRoom?.id === room.id ? ' active' : '');
+          div.dataset.id = room.id;
+          renderRoomRow(
+            div,
+            room.dmPartner?.name || room.name || 'DM',
+            room.id,
+          );
+          div.addEventListener('click', () => openRoom(room));
+          scroll.appendChild(div);
+        });
+      }
+
+      function renderRoomRow(div, displayName, roomId) {
+        const meta = roomMeta.get(roomId) || {
+          preview: 'No messages',
+          unreadCount: 0,
+        };
+        div.innerHTML = `
+          <div style="flex:1;min-width:0">
+            <div class="rname">${esc(displayName)}</div>
+            <div class="rmeta">${esc(meta.preview)}</div>
+          </div>
+          ${meta.unreadCount > 0 ? `<span class="badge">${meta.unreadCount}</span>` : ''}
+        `;
+      }
+
+      function updateRoomRowMeta(roomId, preview, unreadDelta) {
+        const meta = roomMeta.get(roomId);
+        if (!meta) return; // room not loaded yet
+        meta.preview = preview;
+        meta.unreadCount = Math.max(0, (meta.unreadCount ?? 0) + unreadDelta);
+        roomMeta.set(roomId, meta);
+        const row = document.querySelector(`.room-row[data-id="${roomId}"]`);
+        if (!row) return;
+        const nameEl = row.querySelector('.rname');
+        renderRoomRow(row, nameEl?.textContent || '', roomId);
+      }
+
+      // ── Room detail ───────────────────────────────────────────────────────────
+      async function openRoom(roomSummary) {
+        activeRoom = roomSummary;
+
+        // highlight in sidebar
+        document.querySelectorAll('.room-row').forEach((el) => {
+          el.classList.toggle('active', el.dataset.id === roomSummary.id);
+        });
+
+        // fetch room + members in parallel
+        try {
+          const headers = { Authorization: `Bearer ${token}` };
+          const [roomRes, membersRes] = await Promise.all([
+            fetch(`${API}/rooms/${roomSummary.id}`, { headers }),
+            fetch(`${API}/rooms/${roomSummary.id}/members`, { headers }),
+          ]);
+          if (!roomRes.ok) return toast('Could not load room', 'error');
+          const roomJson = await roomRes.json();
+          const room = { ...roomJson.data, role: roomSummary.role };
+          const members = membersRes.ok ? (await membersRes.json()).data : [];
+
+          // for DM rooms, use dmPartner from list response, or fall back to members fetch
+          if (room.type === 'DM') {
+            const partner =
+              roomSummary.dmPartner ||
+              members.find((m) => m.userId !== currentUser?.id)?.user;
+            room.displayName = partner ? partner.name : 'DM';
+          } else {
+            room.displayName = room.name || 'Unnamed room';
+          }
+
+          activeRoom = { ...activeRoom, displayName: room.displayName };
+
+          renderRoomDetail(room);
+          renderMembers(members);
+          document.getElementById('chat-area').innerHTML = '';
+          typingUsers.clear();
+          const ti = document.getElementById('typing-indicator');
+          if (ti) ti.textContent = '';
+
+          // update sidebar row: partner name + clear unread badge
+          const sidebarRow = document.querySelector(
+            `.room-row[data-id="${room.id}"]`,
+          );
+          if (sidebarRow) {
+            const nameEl = sidebarRow.querySelector('.rname');
+            if (nameEl) nameEl.textContent = room.displayName;
+            const badge = sidebarRow.querySelector('.badge');
+            if (badge) badge.remove();
+          }
+          const meta = roomMeta.get(room.id);
+          if (meta) {
+            meta.unreadCount = 0;
+            roomMeta.set(room.id, meta);
+          }
+
+          joinSocketRoom(room.id);
+        } catch {
+          toast('Network error', 'error');
+        }
+      }
+
+      function renderRoomDetail(room) {
+        const isOwner = room.role === 'OWNER';
+
+        document.getElementById('rh-name').textContent =
+          room.displayName || room.name || 'DM';
+        document.getElementById('rh-count').textContent = room.memberCount;
+        document.getElementById('rh-type').textContent = room.type;
+
+        // owner-only actions
+        const isDm = room.type === 'DM';
+        document.getElementById('action-invite').style.display =
+          isOwner && !isDm ? 'flex' : 'none';
+        document.getElementById('action-remove').style.display =
+          isOwner && !isDm ? 'flex' : 'none';
+        document.getElementById('delete-btn').style.display =
+          isOwner && !isDm ? 'inline-block' : 'none';
+        document.getElementById('leave-btn').style.display = isDm
+          ? 'none'
+          : 'inline-block';
+
+        document.getElementById('invite-status').textContent = '';
+        document.getElementById('remove-status').textContent = '';
+        document.getElementById('invite-email').value = '';
+        document.getElementById('remove-email').value = '';
+
+        document.getElementById('main-placeholder').style.display = 'none';
+        document.getElementById('room-detail').style.display = 'flex';
+      }
+
+      function renderMembers(members) {
+        const bar = document.getElementById('members-bar');
+        bar.innerHTML = '';
+        members.forEach((m) => {
+          const isSelf = m.userId === currentUser?.id;
+          const isOwner = m.role === 'OWNER';
+          const initial = (m.user.name || '?')[0].toUpperCase();
+          const chip = document.createElement('div');
+          chip.className = 'mem-chip' + (isSelf ? ' self' : '');
+          chip.title = isSelf ? 'You' : `DM ${m.user.name}`;
+          chip.innerHTML = `
+            <div class="mem-avatar${isOwner ? ' owner' : ''}">${esc(initial)}</div>
+            <span class="mem-name">${esc(m.user.name)}</span>
+          `;
+          if (!isSelf) {
+            chip.addEventListener('click', () => {
+              document.getElementById('dm-email').value = m.user.email;
+              openDm();
+            });
+          }
+          bar.appendChild(chip);
+        });
+      }
+
+      // ── Create room — POST /rooms ─────────────────────────────────────────────
+      async function createRoom() {
+        const input = document.getElementById('new-room-name');
+        const name = input.value.trim();
+        if (!name) return;
+        const btn = document.getElementById('create-room-btn');
+        btn.disabled = true;
+        try {
+          const res = await fetch(`${API}/rooms`, {
+            method: 'POST',
+            headers: {
+              'Content-Type': 'application/json',
+              Authorization: `Bearer ${token}`,
+            },
+            body: JSON.stringify({ name }),
+          });
+          const json = await res.json();
+          if (!res.ok)
+            return toast(json.message || 'Failed to create room', 'error');
+          input.value = '';
+          toast(`"${json.data.name}" created`, 'success');
+          loadRooms();
+        } catch {
+          toast('Network error', 'error');
+        } finally {
+          btn.disabled = false;
+        }
+      }
+
+      // ── Invite user — POST /rooms/:id/invite ──────────────────────────────────
+      async function inviteUser() {
+        const email = document.getElementById('invite-email').value.trim();
+        const status = document.getElementById('invite-status');
+        if (!email) return;
+        const btn = document.getElementById('invite-btn');
+        btn.disabled = true;
+        try {
+          const res = await fetch(`${API}/rooms/${activeRoom.id}/invite`, {
+            method: 'POST',
+            headers: {
+              'Content-Type': 'application/json',
+              Authorization: `Bearer ${token}`,
+            },
+            body: JSON.stringify({ email }),
+          });
+          const json = await res.json();
+          if (!res.ok) {
+            status.textContent = json.message || 'Failed';
+            status.style.color = '#f87171';
+            return;
+          }
+          status.textContent = 'Invited!';
+          status.style.color = '#4ade80';
+          document.getElementById('invite-email').value = '';
+          loadRooms(); // refresh memberCount
+        } catch {
+          status.textContent = 'Network error';
+          status.style.color = '#f87171';
+        } finally {
+          btn.disabled = false;
+        }
+      }
+
+      // ── Remove member — DELETE /rooms/:id/members ─────────────────────────────
+      async function removeMember() {
+        const email = document.getElementById('remove-email').value.trim();
+        const status = document.getElementById('remove-status');
+        if (!email) return;
+        if (!confirm(`Remove ${email} from this room?`)) return;
+        const btn = document.getElementById('remove-btn');
+        btn.disabled = true;
+        try {
+          const res = await fetch(`${API}/rooms/${activeRoom.id}/members`, {
+            method: 'DELETE',
+            headers: {
+              'Content-Type': 'application/json',
+              Authorization: `Bearer ${token}`,
+            },
+            body: JSON.stringify({ email }),
+          });
+          const json = await res.json();
+          if (!res.ok) {
+            status.textContent = json.message || 'Failed';
+            status.style.color = '#f87171';
+            return;
+          }
+          status.textContent = 'Removed';
+          status.style.color = '#4ade80';
+          document.getElementById('remove-email').value = '';
+          loadRooms();
+        } catch {
+          status.textContent = 'Network error';
+          status.style.color = '#f87171';
+        } finally {
+          btn.disabled = false;
+        }
+      }
+
+      // ── Leave room — DELETE /rooms/:id/leave ──────────────────────────────────
+      async function leaveRoom() {
+        if (!activeRoom) return;
+        const msg =
+          activeRoom.role === 'OWNER'
+            ? "You are the owner. Leaving will auto-promote the earliest member. If you're the last member, the room is deleted. Continue?"
+            : 'Leave this room?';
+        if (!confirm(msg)) return;
+        const btn = document.getElementById('leave-btn');
+        btn.disabled = true;
+        try {
+          const res = await fetch(`${API}/rooms/${activeRoom.id}/leave`, {
+            method: 'DELETE',
+            headers: { Authorization: `Bearer ${token}` },
+          });
+          const json = await res.json();
+          if (!res.ok) return toast(json.message || 'Could not leave', 'error');
+          toast('Left room', 'success');
+          activeRoom = null;
+          closeRoomDetail();
+          loadRooms();
+        } catch {
+          toast('Network error', 'error');
+        } finally {
+          btn.disabled = false;
+        }
+      }
+
+      // ── Delete room — DELETE /rooms/:id ───────────────────────────────────────
+      async function deleteRoom() {
+        if (!activeRoom) return;
+        if (
+          !confirm(
+            `Permanently delete "${activeRoom.displayName || activeRoom.name || 'this room'}"? This cannot be undone.`,
+          )
+        )
+          return;
+        const btn = document.getElementById('delete-btn');
+        btn.disabled = true;
+        try {
+          const res = await fetch(`${API}/rooms/${activeRoom.id}`, {
+            method: 'DELETE',
+            headers: { Authorization: `Bearer ${token}` },
+          });
+          const json = await res.json();
+          if (!res.ok)
+            return toast(json.message || 'Could not delete', 'error');
+          toast('Room deleted', 'success');
+          activeRoom = null;
+          closeRoomDetail();
+          loadRooms();
+        } catch {
+          toast('Network error', 'error');
+        } finally {
+          btn.disabled = false;
+        }
+      }
+
+      // ── Open DM — POST /rooms/dm ──────────────────────────────────────────────
+      async function openDm() {
+        const email = document.getElementById('dm-email').value.trim();
+        const status = document.getElementById('dm-status');
+        if (!email) return;
+        const btn = document.getElementById('dm-btn');
+        btn.disabled = true;
+        status.textContent = '';
+        try {
+          const res = await fetch(`${API}/rooms/dm`, {
+            method: 'POST',
+            headers: {
+              'Content-Type': 'application/json',
+              Authorization: `Bearer ${token}`,
+            },
+            body: JSON.stringify({ email }),
+          });
+          const json = await res.json();
+          if (!res.ok) {
+            status.textContent = json.message || 'Failed';
+            status.style.color = '#f87171';
+            return;
+          }
+          document.getElementById('dm-email').value = '';
+          status.textContent = 'DM opened';
+          status.style.color = '#4ade80';
+          await loadRooms();
+          // find the DM room in the list and open it
+          const dmRoom = json.data;
+          const row = document.querySelector(
+            `.room-row[data-id="${dmRoom.id}"]`,
+          );
+          if (row) row.click();
+        } catch {
+          status.textContent = 'Network error';
+          status.style.color = '#f87171';
+        } finally {
+          btn.disabled = false;
+        }
+      }
+
+      // ── Socket.io ─────────────────────────────────────────────────────────────
+      function connectSocket() {
+        if (socket?.connected) return;
+        socket = io({ auth: { token } });
+
+        socket.on('connect', () => toast('Connected', 'success'));
+        socket.on('disconnect', () => toast('Disconnected', 'error'));
+        socket.on('ephemeral', (e) => toast(e.message, 'error'));
+
+        socket.on('room_snapshot', ({ roomId, messages }) => {
+          if (activeRoom?.id !== roomId) return;
+          if (messages.length > 0) {
+            lastSeenId.set(roomId, messages[messages.length - 1].id);
+            renderMessages(messages);
+          }
+          // messages === [] means client was up to date — don't wipe the chat area
+        });
+
+        socket.on('new_message', (msg) => {
+          lastSeenId.set(msg.roomId, msg.id); // track even for rooms not currently open
+          const isActive = activeRoom?.id === msg.roomId;
+          const preview = trunc(msg.content, 26);
+          // increment unread only if not the active room
+          updateRoomRowMeta(msg.roomId, preview, isActive ? 0 : 1);
+          if (!isActive) return;
+          appendMessages([msg]);
+        });
+
+        socket.on('user_joined', ({ userId, name, roomId }) => {
+          if (activeRoom?.id !== roomId) return;
+          appendSystemMsg(`${esc(name)} joined`);
+        });
+
+        socket.on('user_left', ({ userId, roomId }) => {
+          if (activeRoom?.id !== roomId) return;
+          appendSystemMsg(`A user left`);
+        });
+
+        socket.on('typing_update', ({ roomId, userId, name, isTyping }) => {
+          if (activeRoom?.id !== roomId) return;
+          if (userId === currentUser?.id) return; // don't show own typing
+          updateTypingIndicator(userId, name, isTyping);
+        });
+      }
+
+      // typing indicator state: Map of userId → name
+      const typingUsers = new Map();
+
+      function updateTypingIndicator(userId, name, isTyping) {
+        if (isTyping) typingUsers.set(userId, name);
+        else typingUsers.delete(userId);
+        const el = document.getElementById('typing-indicator');
+        if (!el) return;
+        if (typingUsers.size === 0) {
+          el.textContent = '';
+          return;
+        }
+        const names = [...typingUsers.values()].map((n) => esc(n));
+        el.textContent =
+          names.length === 1
+            ? `${names[0]} is typing…`
+            : `${names.join(', ')} are typing…`;
+      }
+
+      function joinSocketRoom(roomId) {
+        if (!socket?.connected) return;
+        const payload = { roomId };
+        const cursor = lastSeenId.get(roomId);
+        if (cursor) payload.lastMessageId = cursor;
+        socket.emit('join_room', payload);
+      }
+
+      // ── Chat ──────────────────────────────────────────────────────────────────
+      // Typing debounce — emit typing_stop 2s after last keystroke
+      let typingTimeout = null;
+      function onChatInput() {
+        if (!activeRoom || !socket?.connected) return;
+        socket.emit('typing_start', { roomId: activeRoom.id });
+        clearTimeout(typingTimeout);
+        typingTimeout = setTimeout(() => {
+          socket.emit('typing_stop', { roomId: activeRoom.id });
+        }, 2000);
+      }
+
+      // Heartbeat — every 20s to keep presence alive
+      setInterval(() => {
+        if (socket?.connected) socket.emit('heartbeat');
+      }, 20000);
+
+      function sendMessage() {
+        const input = document.getElementById('chat-input');
+        const content = input.value.trim();
+        if (!content || !activeRoom || !socket?.connected) return;
+        const btn = document.getElementById('send-btn');
+        btn.disabled = true;
+        socket.emit('typing_stop', { roomId: activeRoom.id });
+        clearTimeout(typingTimeout);
+        socket.emit(
+          'send_message',
+          { roomId: activeRoom.id, content },
+          (ack) => {
+            btn.disabled = false;
+          },
+        );
+        // optimistic clear
+        input.value = '';
+        input.style.height = '40px';
+        // re-enable immediately (server will broadcast new_message back)
+        btn.disabled = false;
+      }
+
+      function onChatKeyDown(e) {
+        if (e.key === 'Enter' && !e.shiftKey) {
+          e.preventDefault();
+          sendMessage();
+        }
+      }
+
+      function renderMessages(messages) {
+        const area = document.getElementById('chat-area');
+        area.innerHTML = '';
+        messages.forEach((m) => area.appendChild(buildMessageEl(m)));
+        area.scrollTop = area.scrollHeight;
+      }
+
+      function appendMessages(messages) {
+        const area = document.getElementById('chat-area');
+        messages.forEach((m) => area.appendChild(buildMessageEl(m)));
+        area.scrollTop = area.scrollHeight;
+      }
+
+      function appendSystemMsg(text) {
+        const area = document.getElementById('chat-area');
+        const div = document.createElement('div');
+        div.style.cssText =
+          'text-align:center;font-size:11px;color:#444;padding:4px 0';
+        div.textContent = text;
+        area.appendChild(div);
+        area.scrollTop = area.scrollHeight;
+      }
+
+      function buildMessageEl(msg) {
+        const isMine = msg.userId === currentUser?.id;
+        const name = msg.user?.name || 'Unknown';
+        const time = new Date(msg.createdAt).toLocaleTimeString([], {
+          hour: '2-digit',
+          minute: '2-digit',
+        });
+        const div = document.createElement('div');
+        div.style.cssText = `display:flex;flex-direction:column;align-items:${isMine ? 'flex-end' : 'flex-start'};padding:3px 20px`;
+        div.innerHTML = `
+          ${!isMine ? `<div style="font-size:11px;color:#555;margin-bottom:2px">${esc(name)}</div>` : ''}
+          <div style="max-width:70%;background:${isMine ? '#2a3a5c' : '#1e1e1e'};border-radius:10px;padding:8px 12px;font-size:14px;line-height:1.4">${esc(msg.content)}</div>
+          <div style="font-size:10px;color:#444;margin-top:2px">${time}</div>
+        `;
+        return div;
+      }
+
+      // ── UI helpers ────────────────────────────────────────────────────────────
+      function showLoggedIn() {
+        document.getElementById('logged-out').style.display = 'none';
+        document.getElementById('logged-in').style.display = 'block';
+        document.getElementById('user-card').style.display = 'flex';
+        document.getElementById('user-name').textContent = currentUser.name;
+        document.getElementById('user-email').textContent = currentUser.email;
+        document.getElementById('user-avatar').textContent =
+          (currentUser.name || '?')[0].toUpperCase();
+        document.getElementById('rooms-signin').style.display = 'none';
+        document.getElementById('rooms-panel').style.display = 'flex';
+        document.getElementById('rooms-panel').style.flexDirection = 'column';
+        document.getElementById('dm-panel').style.display = 'block';
+        document.getElementById('main-placeholder').textContent =
+          'Select a room to get started';
+        document.getElementById('main-placeholder').style.display = 'flex';
+        connectSocket();
+      }
+
+      function showLoggedOut() {
+        document.getElementById('logged-out').style.display = 'block';
+        document.getElementById('logged-in').style.display = 'none';
+        document.getElementById('rooms-signin').style.display = 'block';
+        document.getElementById('rooms-panel').style.display = 'none';
+        document.getElementById('dm-panel').style.display = 'none';
+        document
+          .getElementById('rooms-scroll')
+          .querySelectorAll('.room-row')
+          .forEach((e) => e.remove());
+        closeRoomDetail();
+        document.getElementById('main-placeholder').textContent =
+          'Sign in to start chatting';
+        document.getElementById('main-placeholder').style.display = 'flex';
+        if (socket) {
+          socket.disconnect();
+          socket = null;
+        }
+        lastSeenId.clear();
+      }
+
+      function closeRoomDetail() {
+        document.getElementById('room-detail').style.display = 'none';
+        document.getElementById('members-bar').innerHTML = '';
+        document.getElementById('chat-area').innerHTML = '';
+        document
+          .querySelectorAll('.room-row')
+          .forEach((el) => el.classList.remove('active'));
+      }
+
+      function showStatus(msg, type) {
+        const el = document.getElementById('auth-status');
+        el.textContent = msg;
+        el.style.color = type === 'err' ? '#f87171' : '#4ade80';
+      }
+
+      function toast(msg, type = '') {
+        const el = document.getElementById('toast');
+        el.textContent = msg;
+        el.className = type;
+        el.style.display = 'block';
+        setTimeout(() => {
+          el.style.display = 'none';
+        }, 3000);
+      }
+
+      function esc(s) {
+        return String(s ?? '')
+          .replace(/&/g, '&amp;')
+          .replace(/</g, '&lt;')
+          .replace(/>/g, '&gt;')
+          .replace(/"/g, '&quot;');
+      }
+
+      function trunc(s, n) {
+        return s && s.length > n ? s.slice(0, n) + '…' : s || '';
+      }
+    </script>
+  </body>
+</html>

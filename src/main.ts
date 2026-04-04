@@ -1,49 +1,49 @@
 import 'dotenv/config';
+import { join } from 'path';
 
-// Now safe to import modules that depend on environment variables
 import helmet from 'helmet';
 import { createAdapter } from '@socket.io/redis-adapter';
 import { Redis } from 'ioredis';
 
 import { NestFactory } from '@nestjs/core';
 import { Logger } from '@nestjs/common';
+import { NestExpressApplication } from '@nestjs/platform-express';
 import { IoAdapter } from '@nestjs/platform-socket.io';
 import { DocumentBuilder, SwaggerModule } from '@nestjs/swagger';
+import { ConfigService } from '@nestjs/config';
 
 import { AppModule } from './app.module';
 
 async function bootstrap() {
-  // create app
-  const app = await NestFactory.create(AppModule, {
+  const app = await NestFactory.create<NestExpressApplication>(AppModule, {
     rawBody: true,
   });
 
-  // logger for debug purposes
   const logger = new Logger('API_GATEWAY');
+  const configService = app.get<ConfigService>(ConfigService);
+
+  // Serve test client at /
+  app.useStaticAssets(join(process.cwd(), 'test-client'));
 
   /// MIDDLEWARES
-  // 1. cors
   app.enableCors({
-    origin: ['http://localhost:3000'],
+    origin: [
+      configService.get('NEXT_PUBLIC_APP_URL')!,
+      `http://localhost:${configService.get('PORT')}`,
+    ],
     methods: ['GET', 'HEAD', 'PUT', 'PATCH', 'POST', 'DELETE'],
   });
-  // 2. helmet
+
   app.use(
     helmet({
       crossOriginEmbedderPolicy: false,
       contentSecurityPolicy: {
         directives: {
-          imgSrc: [
-            `'self'`,
-            'data:',
-            'apollo-server-landing-page.cdn.apollographql.com',
-          ],
-          scriptSrc: [`'self'`, `https: 'unsafe-inline'`],
-          manifestSrc: [
-            `'self'`,
-            'apollo-server-landing-page.cdn.apollographql.com',
-          ],
-          frameSrc: [`'self'`, 'sandbox.embed.apollographql.com'],
+          defaultSrc: [`'self'`],
+          imgSrc: [`'self'`, 'data:', 'https:'],
+          scriptSrc: [`'self'`, `'unsafe-inline'`, 'https://cdn.socket.io'],
+          connectSrc: [`'self'`, 'ws:', 'wss:'],
+          styleSrc: [`'self'`, `'unsafe-inline'`],
         },
       },
     }),
@@ -54,11 +54,11 @@ async function bootstrap() {
     exclude: ['/health', '/docs'],
   });
 
-  /// DOCUMENTATIONS
+  /// SWAGGER
   const swaggerDoc = new DocumentBuilder()
-    .setTitle('Fintrack Api Docs')
+    .setTitle('Agentchat API Docs')
     .setDescription(
-      'API documentation for Fintrack, A financial tracking tool (Nest/TypeScript) backend application.\n',
+      'API documentation for Agentchat, a collaborative chat backend with on-demand AI assistant.\n',
     )
     .setVersion('1.0.0')
     .addBearerAuth()
@@ -67,13 +67,12 @@ async function bootstrap() {
   const document = SwaggerModule.createDocument(app, swaggerDoc);
   SwaggerModule.setup('docs', app, document);
 
-  // set up redis
-  const pubClient = new Redis(process.env.REDIS_URL!, {
+  // Redis Socket.io adapter
+  const pubClient = new Redis(configService.get('REDIS_URL')!, {
     maxRetriesPerRequest: null,
   });
   const subClient = pubClient.duplicate();
 
-  // 2. Create the custom Socket.io Adapter
   class RedisIoAdapter extends IoAdapter {
     private adapterConstructor: ReturnType<typeof createAdapter>;
 
@@ -88,16 +87,13 @@ async function bootstrap() {
     }
   }
 
-  // 3. Connect and apply the adapter
   const redisIoAdapter = new RedisIoAdapter(app);
   await redisIoAdapter.connectToRedis();
-
   app.useWebSocketAdapter(redisIoAdapter);
 
   app.enableShutdownHooks();
 
-  // start server
-  const port = Number(process.env.API_GATEWAY_PORT);
+  const port = parseInt(configService.get('PORT')!, 10);
   app.listen(port, () => {
     logger.log(`Running on port ${port}`);
   });
