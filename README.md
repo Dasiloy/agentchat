@@ -448,7 +448,7 @@ Email/password login (using the credentials above) works for everyone and has no
 
 ## CI
 
-A GitHub Actions workflow runs on every push and pull request to `main`:
+A GitHub Actions workflow runs on every push and pull request to `master`:
 
 1. **Test** — installs dependencies, runs `pnpm test`
 
