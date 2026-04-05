@@ -111,7 +111,7 @@ describe('Auth & Health (e2e)', () => {
 
     it('returns 200 and user data when a valid token is sent', async () => {
       const user = { id: 'u1', email: 'alice@example.com', name: 'Alice' };
-      const token = jwtService.sign({ sub: user.id, email: user.email });
+      const token = jwtService.sign({ sub: user.id, email: user.email, type: 'access' });
 
       // Redis cache hit — no DB call needed
       mockRedis.get.mockResolvedValueOnce(JSON.stringify(user));
