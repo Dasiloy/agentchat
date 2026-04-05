@@ -1,0 +1,89 @@
+{
+  "module": "Voice",
+  "baseUrl": "/api/voice",
+  "note": "All endpoints require Authorization: Bearer <token>. File uploads must use multipart/form-data. Transcription and TTS run asynchronously via BullMQ — the HTTP response returns immediately after the message is persisted and broadcast.",
+  "endpoints": [
+    {
+      "id": "upload-voice",
+      "method": "POST",
+      "path": "/api/voice/upload",
+      "auth": true,
+      "summary": "Upload a voice file. The file is stored on Cloudinary, a VOICE message is created in the room, the room is notified, and a background transcription job is queued. Returns immediately without waiting for transcription.",
+      "request": {
+        "contentType": "multipart/form-data",
+        "body": {
+          "file": {
+            "type": "file",
+            "required": true,
+            "description": "Audio or video file to transcribe.",
+            "acceptedMimeTypes": [
+              "audio/webm",
+              "audio/mpeg",
+              "audio/mp3",
+              "audio/wav",
+              "audio/wave",
+              "video/mp4",
+              "video/webm"
+            ],
+            "maxSizeBytes": 10485760
+          },
+          "roomId": {
+            "type": "string",
+            "required": true,
+            "example": "clh0abc123roomid0001",
+            "description": "ID of the room the voice message belongs to."
+          }
+        }
+      },
+      "responses": {
+        "201": {
+          "description": "Voice message created. Transcription is in progress — listen for 'voice_transcribed' on the WebSocket.",
+          "example": {
+            "success": true,
+            "statusCode": 201,
+            "message": "Voice message uploaded",
+            "data": {
+              "messageId": "clh0abc123msgid0001",
+              "status": "transcribing"
+            }
+          }
+        },
+        "400": { "description": "Invalid file type or file exceeds 10 MB." },
+        "401": { "description": "Missing or expired JWT." },
+        "500": { "description": "Cloudinary upload failed." }
+      },
+      "asyncEvents": {
+        "note": "After the HTTP response, the following WebSocket events may be emitted to the room.",
+        "voice_transcribed": {
+          "emittedTo": "room",
+          "payload": {
+            "messageId": "clh0abc123msgid0001",
+            "transcript": "The transcribed text of the audio",
+            "audioUrl": "https://res.cloudinary.com/..."
+          },
+          "description": "Fired when Whisper transcription completes. Update the message content in the UI."
+        },
+        "ai_thinking": {
+          "emittedTo": "room",
+          "payload": { "triggeredBy": "Voice" },
+          "description": "Fired only if the transcript starts with '@ai'. Signals that an AI response is being generated."
+        },
+        "ai_token": {
+          "emittedTo": "room",
+          "payload": { "token": "Hello", "tempMessageId": "<uuid>" },
+          "description": "Streamed token from the AI response (voice @ai only)."
+        },
+        "ai_response_complete": {
+          "emittedTo": "room",
+          "payload": { "messageId": "<saved-ai-message-id>", "tempMessageId": "<uuid>" },
+          "description": "AI response fully streamed and persisted. Swap the temp bubble."
+        },
+        "ai_audio_ready": {
+          "emittedTo": "room",
+          "payload": { "messageId": "<saved-ai-message-id>", "audioUrl": "https://res.cloudinary.com/..." },
+          "description": "TTS audio for the AI response is ready (voice-triggered AI only). Render an audio player."
+        }
+      }
+    }
+  ]
+}

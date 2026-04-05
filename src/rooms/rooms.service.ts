@@ -1,13 +1,18 @@
 import {
   ForbiddenException,
   HttpException,
+  Inject,
   Injectable,
   InternalServerErrorException,
   Logger,
   NotFoundException,
+  forwardRef,
 } from '@nestjs/common';
+import { Redis } from 'ioredis';
 
 import { PrismaService } from '../common/prisma/prisma.service';
+import { REDIS_CLIENT } from '../common/redis/redis.provider';
+import { ChatGateway } from '../gateway/chat.gateway';
 import { MemberRole, RoomType } from '../generated/prisma/enums';
 import { CreateRoomDto } from './dto/create-room.dto';
 import { Prisma } from '../generated/prisma/client';
@@ -16,7 +21,12 @@ import { Prisma } from '../generated/prisma/client';
 export class RoomsService {
   private readonly logger = new Logger(RoomsService.name);
 
-  constructor(private readonly prisma: PrismaService) {}
+  constructor(
+    private readonly prisma: PrismaService,
+    @Inject(forwardRef(() => ChatGateway))
+    private readonly gateway: ChatGateway,
+    @Inject(REDIS_CLIENT) private readonly redis: Redis,
+  ) {}
 
   /**
    * Creates a new room and registers the caller as OWNER.
@@ -104,6 +114,7 @@ export class RoomsService {
                 COUNT(*)::bigint AS "unreadCount"
               FROM "Message" m
               WHERE m."roomId" = ANY(${roomIds}::text[])
+                AND m."userId" != ${userId}
                 AND m."createdAt" > (
                   SELECT rm."joinedAt"
                   FROM "RoomMember" rm
@@ -188,8 +199,9 @@ export class RoomsService {
         this.logger.log('nextmember', nextMember);
 
         if (!nextMember) {
+          // Broadcast before deletion so sockets still in the room receive it
+          this.gateway.emitToRoom(roomId, 'room_deleted', { roomId });
           await this.prisma.room.delete({ where: { id: roomId } });
-          // TODO (PROMPT 6): broadcast room_deleted to all room members before deletion
           return;
         }
 
@@ -216,7 +228,7 @@ export class RoomsService {
             timeout: 30000,
           },
         );
-        // TODO (PROMPT 6): emit user_left { userId, roomId } to room after transaction
+        this.gateway.emitToRoom(roomId, 'user_left', { userId, roomId });
         return;
       }
 
@@ -236,7 +248,7 @@ export class RoomsService {
           timeout: 30000,
         },
       );
-      // TODO (PROMPT 6): emit user_left { userId, roomId } to room after transaction
+      this.gateway.emitToRoom(roomId, 'user_left', { userId, roomId });
     } catch (error) {
       this.logger.error('leaveRoom error:', error);
       if (error instanceof HttpException) throw error;
@@ -251,8 +263,8 @@ export class RoomsService {
   async deleteRoom(roomId: string, userId: string) {
     try {
       await this.assertOwner(roomId, userId);
+      this.gateway.emitToRoom(roomId, 'room_deleted', { roomId });
       await this.prisma.room.delete({ where: { id: roomId } });
-      // TODO (PROMPT 6): emit room_deleted { roomId } to all room members before deletion
     } catch (error) {
       this.logger.error('deleteRoom error:', error);
       if (error instanceof HttpException) throw error;
@@ -300,9 +312,28 @@ export class RoomsService {
         },
         { isolationLevel: Prisma.TransactionIsolationLevel.Serializable },
       );
-      // TODO (PROMPT 6): emit user_joined { userId: target.id, roomId } to room so
-      //   online members receive the new member without needing to refresh
-      // also invited memeber gets the rrom instantly without need to refersh
+
+      // Fetch target user info for the broadcast
+      const targetUser = await this.prisma.user.findUnique({
+        where: { id: target.id },
+        select: { id: true, name: true, avatar: true },
+      });
+
+      // Notify existing room members that someone new joined
+      this.gateway.emitToRoom(roomId, 'user_joined', {
+        userId: target.id,
+        name: targetUser?.name,
+        roomId,
+      });
+
+      // Push the room to the invited user immediately if they are online
+      const invitedSocketId = await this.redis.get(`socket:${target.id}`);
+      if (invitedSocketId) {
+        const room = await this.prisma.room.findUnique({
+          where: { id: roomId },
+        });
+        this.gateway.emitToSocket(invitedSocketId, 'room_pushed', { room });
+      }
     } catch (error) {
       this.logger.error('inviteUser error:', error);
       if (error instanceof HttpException) throw error;
@@ -330,6 +361,7 @@ export class RoomsService {
       if (target.id === callerId)
         throw new ForbiddenException('You can leave the room!');
 
+      let wasMember = false;
       await this.prisma.$transaction(
         async (tx) => {
           const member = await tx.roomMember.findUnique({
@@ -338,6 +370,7 @@ export class RoomsService {
           });
 
           if (!member) return;
+          wasMember = true;
 
           await tx.roomMember.delete({
             where: { roomId_userId: { roomId, userId: target.id } },
@@ -353,6 +386,21 @@ export class RoomsService {
           isolationLevel: Prisma.TransactionIsolationLevel.Serializable,
         },
       );
+
+      if (wasMember) {
+        // Tell everyone remaining the member left
+        this.gateway.emitToRoom(roomId, 'user_left', {
+          userId: target.id,
+          roomId,
+        });
+        // Tell the removed user their room was taken away
+        const removedSocketId = await this.redis.get(`socket:${target.id}`);
+        if (removedSocketId) {
+          this.gateway.emitToSocket(removedSocketId, 'room_removed', {
+            roomId,
+          });
+        }
+      }
     } catch (error) {
       this.logger.error('removeMember error:', error);
       if (error instanceof HttpException) throw error;
@@ -425,7 +473,7 @@ export class RoomsService {
 
       if (existing) return existing;
 
-      return await this.prisma.room.create({
+      const dm = await this.prisma.room.create({
         data: {
           type: RoomType.DM,
           memberCount: 2,
@@ -437,6 +485,17 @@ export class RoomsService {
           },
         },
       });
+
+      // Push the room to the dm user immediately if they are online
+      const invitedSocketId = await this.redis.get(`socket:${target.id}`);
+      if (invitedSocketId) {
+        const room = await this.prisma.room.findUnique({
+          where: { id: dm.id },
+        });
+        this.gateway.emitToSocket(invitedSocketId, 'room_pushed', { room });
+      }
+
+      return dm;
     } catch (error) {
       this.logger.error('createOrGetDm error:', error);
       if (error instanceof HttpException) throw error;

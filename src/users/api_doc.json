@@ -1,0 +1,52 @@
+{
+  "module": "Users",
+  "baseUrl": "/api/users",
+  "note": "All endpoints require Authorization: Bearer <token>. The authenticated user is excluded from search results — you will never see yourself.",
+  "endpoints": [
+    {
+      "id": "search-users",
+      "method": "GET",
+      "path": "/api/users/search",
+      "auth": true,
+      "summary": "Search registered users by name or email prefix (case-insensitive). Useful for finding users to invite to a room or start a DM. Returns at most 10 results.",
+      "request": {
+        "query": {
+          "q": {
+            "type": "string",
+            "required": true,
+            "minLength": 3,
+            "maxLength": 100,
+            "example": "ali",
+            "description": "Search term — matched as a prefix against both name and email. Minimum 3 characters."
+          }
+        }
+      },
+      "responses": {
+        "200": {
+          "description": "Matching users (max 10). Password hash is never returned.",
+          "example": {
+            "success": true,
+            "statusCode": 200,
+            "message": "Users found",
+            "data": [
+              {
+                "id": "clh0abc123userid0001",
+                "name": "Alice Becca",
+                "email": "alice@example.com",
+                "avatar": null
+              },
+              {
+                "id": "clh0abc123userid0002",
+                "name": "Alicia Keys",
+                "email": "alicia@example.com",
+                "avatar": "https://res.cloudinary.com/example/avatar.jpg"
+              }
+            ]
+          }
+        },
+        "400": { "description": "Query parameter 'q' is missing or shorter than 3 characters." },
+        "401": { "description": "Missing or expired JWT." }
+      }
+    }
+  ]
+}

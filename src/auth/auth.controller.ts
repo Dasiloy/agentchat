@@ -26,7 +26,7 @@ import { RegisterDto } from './dto/register.dto';
 import { LoginDto } from './dto/login.dto';
 import { StandardResponse } from '../@types/interface/response';
 import { AuthResponse } from '../auth/response/response';
-import { User } from 'src/generated/prisma/client';
+import { User } from '../generated/prisma/client';
 
 @ApiTags('Auth')
 @Controller('auth')

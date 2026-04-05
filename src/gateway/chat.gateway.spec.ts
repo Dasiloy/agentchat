@@ -5,6 +5,9 @@ import { PrismaService } from '../common/prisma/prisma.service';
 import { REDIS_CLIENT } from '../common/redis/redis.provider';
 import { ChatGateway } from './chat.gateway';
 import { PresenceService } from './presence.service';
+import { AiService } from '../ai/ai.service';
+import { WsJwtGuard } from '../auth/guards/ws-jwt.guard';
+import { RoomMemberGuard } from '../auth/guards/room-member.guard';
 import { MessageType } from '../generated/prisma/enums';
 
 const ROOM_ID = 'room-1';
@@ -37,6 +40,11 @@ function buildPrismaMock() {
       findUnique: jest.fn(),
       findMany: jest.fn(),
     },
+    messageReceipt: {
+      upsert: jest.fn().mockResolvedValue({}),
+      count: jest.fn().mockResolvedValue(1),
+    },
+    $transaction: jest.fn().mockImplementation((ops: any[]) => Promise.all(ops)),
   };
 }
 
@@ -72,8 +80,19 @@ describe('ChatGateway', () => {
             server: null,
           },
         },
+        {
+          provide: AiService,
+          useValue: {
+            queueAiResponse: jest.fn().mockResolvedValue('job-1'),
+          },
+        },
       ],
-    }).compile();
+    })
+      .overrideGuard(WsJwtGuard)
+      .useValue({ canActivate: () => true })
+      .overrideGuard(RoomMemberGuard)
+      .useValue({ canActivate: () => true })
+      .compile();
 
     gateway = module.get<ChatGateway>(ChatGateway);
 
@@ -100,8 +119,8 @@ describe('ChatGateway', () => {
           data: expect.objectContaining({ roomId: ROOM_ID, content: 'hello', type: MessageType.TEXT }),
         }),
       );
-      // broadcast happened after
-      expect((gateway as any).server.to).toHaveBeenCalledWith(ROOM_ID);
+      // broadcast happened via client.to (excludes sender)
+      expect(client.to).toHaveBeenCalledWith(ROOM_ID);
     });
 
     it('should emit ephemeral error to sender only if DB fails — no broadcast', async () => {
@@ -143,6 +162,106 @@ describe('ChatGateway', () => {
       await expect(
         gateway.handleSendMessage(client, { roomId: ROOM_ID, content: '@AI what is NestJS?' }),
       ).resolves.toEqual({ status: 'ok', messageId: 'msg-2' });
+    });
+  });
+
+  // ─── message_delivered ───────────────────────────────────────────────────────
+
+  describe('message_delivered', () => {
+    it('should not emit receipt_update for rooms with >= 100 members', async () => {
+      const client = makeClient();
+      prisma.message.findUnique.mockResolvedValue({
+        roomId: ROOM_ID,
+        userId: 'sender-1',
+        room: { memberCount: 100 },
+      });
+
+      await gateway.handleMessageDelivered(client, { messageId: 'msg-1' });
+
+      expect(prisma.messageReceipt.upsert).not.toHaveBeenCalled();
+      expect((gateway as any).server.to).not.toHaveBeenCalled();
+    });
+
+    it('should upsert deliveredAt and notify sender immediately for small rooms', async () => {
+      const client = makeClient();
+      prisma.message.findUnique.mockResolvedValue({
+        roomId: ROOM_ID,
+        userId: 'sender-1',
+        room: { memberCount: 5 },
+      });
+      prisma.messageReceipt.upsert.mockResolvedValue({});
+      prisma.messageReceipt.count.mockResolvedValue(2);
+      redis.get.mockResolvedValue('socket-sender-1');
+
+      await gateway.handleMessageDelivered(client, { messageId: 'msg-1' });
+
+      expect(prisma.messageReceipt.upsert).toHaveBeenCalledWith(
+        expect.objectContaining({
+          where: { messageId_userId: { messageId: 'msg-1', userId: USER_ID } },
+        }),
+      );
+      expect(redis.get).toHaveBeenCalledWith('socket:sender-1');
+      expect((gateway as any).server.to).toHaveBeenCalledWith('socket-sender-1');
+    });
+  });
+
+  // ─── messages_read ───────────────────────────────────────────────────────────
+
+  describe('messages_read', () => {
+    it('should bulk upsert receipts in one $transaction', async () => {
+      const client = makeClient();
+      const createdAt = new Date();
+      prisma.message.findUnique.mockResolvedValue({
+        createdAt,
+        room: { memberCount: 5 },
+      });
+      prisma.message.findMany.mockResolvedValue([
+        { id: 'msg-1', userId: 'sender-1' },
+        { id: 'msg-2', userId: 'sender-1' },
+      ]);
+      redis.get.mockResolvedValue(null);
+
+      await gateway.handleMessagesRead(client, { roomId: ROOM_ID, upToMessageId: 'msg-2' });
+
+      expect(prisma.$transaction).toHaveBeenCalled();
+      expect(prisma.messageReceipt.upsert).toHaveBeenCalledTimes(2);
+    });
+
+    it('should only notify affected senders, not everyone in the room', async () => {
+      const client = makeClient();
+      const createdAt = new Date();
+      prisma.message.findUnique.mockResolvedValue({
+        createdAt,
+        room: { memberCount: 3 },
+      });
+      // Two messages from two different senders
+      prisma.message.findMany.mockResolvedValue([
+        { id: 'msg-1', userId: 'sender-A' },
+        { id: 'msg-2', userId: 'sender-B' },
+      ]);
+      redis.get
+        .mockResolvedValueOnce('socket-A')
+        .mockResolvedValueOnce('socket-B');
+
+      await gateway.handleMessagesRead(client, { roomId: ROOM_ID, upToMessageId: 'msg-2' });
+
+      // Only the two unique senders are notified — not the whole room
+      expect((gateway as any).server.to).toHaveBeenCalledWith('socket-A');
+      expect((gateway as any).server.to).toHaveBeenCalledWith('socket-B');
+      expect((gateway as any).server.to).toHaveBeenCalledTimes(2);
+    });
+
+    it('should do nothing for rooms with >= 100 members', async () => {
+      const client = makeClient();
+      prisma.message.findUnique.mockResolvedValue({
+        createdAt: new Date(),
+        room: { memberCount: 100 },
+      });
+
+      await gateway.handleMessagesRead(client, { roomId: ROOM_ID, upToMessageId: 'msg-1' });
+
+      expect(prisma.message.findMany).not.toHaveBeenCalled();
+      expect(prisma.$transaction).not.toHaveBeenCalled();
     });
   });
 

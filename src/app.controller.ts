@@ -2,7 +2,7 @@ import { Controller, Get, HttpStatus, VERSION_NEUTRAL } from '@nestjs/common';
 import { ApiOperation, ApiResponse, ApiTags } from '@nestjs/swagger';
 
 import { AppService } from './app.service';
-import { StandardResponse } from 'src/@types/interface/response';
+import { StandardResponse } from './@types/interface/response';
 import { Public } from './common/decorators/public.decorator';
 
 @ApiTags('System')

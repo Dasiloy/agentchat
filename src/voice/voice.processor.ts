@@ -1,0 +1,58 @@
+import { InjectQueue, Processor, WorkerHost } from '@nestjs/bullmq';
+import { Inject, Logger, forwardRef } from '@nestjs/common';
+import { Job, Queue } from 'bullmq';
+
+import { AI_QUEUE, AI_RESPONSE, VOICE_QUEUE, VOICE_TRANSCRIBE, VOICE_TTS } from '../@types/constants/queue';
+import { ChatGateway } from '../gateway/chat.gateway';
+import { VoiceService } from './voice.service';
+
+@Processor(VOICE_QUEUE)
+export class VoiceProcessor extends WorkerHost {
+  private readonly logger = new Logger(VoiceProcessor.name);
+
+  constructor(
+    private readonly voiceService: VoiceService,
+    @Inject(forwardRef(() => ChatGateway)) private readonly gateway: ChatGateway,
+    @InjectQueue(AI_QUEUE) private readonly aiQueue: Queue,
+  ) {
+    super();
+  }
+
+  async process(job: Job): Promise<void> {
+    switch (job.name) {
+      case VOICE_TRANSCRIBE:
+        return this.handleTranscribe(job);
+      case VOICE_TTS:
+        return this.handleTts(job);
+      default:
+        this.logger.warn(`Unhandled voice job: "${job.name}" — skipping`);
+    }
+  }
+
+  private async handleTranscribe(job: Job): Promise<void> {
+    const { messageId, audioUrl, mimeType, roomId, userId } = job.data;
+
+    const transcript = await this.voiceService.transcribeVoice(
+      messageId,
+      audioUrl,
+      mimeType,
+      roomId,
+    );
+
+    // If the voice message is directed at AI, queue a response with TTS enabled.
+    // Voice in → audio out: tts is always true for voice-triggered AI.
+    if (/^@ai\s*/i.test(transcript)) {
+      this.gateway.emitToRoom(roomId, 'ai_thinking', { triggeredBy: 'Voice' });
+      await this.aiQueue.add(
+        AI_RESPONSE,
+        { roomId, messageId, userId, question: transcript, tts: true },
+        { attempts: 2, backoff: { type: 'fixed', delay: 3000 } },
+      );
+    }
+  }
+
+  private async handleTts(job: Job): Promise<void> {
+    const { messageId, text, roomId } = job.data;
+    await this.voiceService.generateAiAudio(messageId, text, roomId);
+  }
+}

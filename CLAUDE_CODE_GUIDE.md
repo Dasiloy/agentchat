@@ -776,6 +776,9 @@ Verify: pnpm test passes.
 Create the AiModelRepository and OpenAI implementation.
 
 Create ONLY:
+Use your discretion and how enteroprise business use repository, the idea is in the future users can switch models in the FE chat
+this should allow the server to use the right model, models can be from openai or arthropic or gemini, so this should guide you on what to do
+take whatever is proivided after this as my thoughtsand adjust and fine tune to meet what we need. Remmeber this must be self managing?? we wont have to be wswitching from openai class to arthropic class manully because the user switched model in fe
 1. src/ai/repositories/ai-model.repository.ts — abstract class (exact from guide)
 2. src/ai/repositories/openai-model.repository.ts — implements AiModelRepository
 
@@ -1019,6 +1022,9 @@ Tasks:
 9. Verify no API keys in any source file (grep for sk-, AKIA, cloudinary key patterns)
 10. Run pnpm build — fix any TypeScript errors
 11. Add Github action simple for running test on push to main
+12. Update Readme especially endpoints and trade-offs
+13. ensure all types, interfaces and enums hgo to @types folder, no types inside services,controllers and business logic, modules,repository and all.
+14. no imports start wioth src in files inclusing tests, jest struggles with those kind of imports
 
 Final checks:
 - Every WebSocket event has a guard
@@ -1060,15 +1066,19 @@ Features to implement in order:
 8. Voice message → file input, shows "transcribing...", then transcript
 9. Read receipt ticks under messages (single tick = sent, double = delivered, blue = read)
 10. Reconnection → auto-reconnect, load missed messages
+11. when inviting user, turn input to search so they can search by email or name, do the same for dm.
+12. remove input used for removing user, add cross icon on member avatra to remove them and also add confirmation, owner cant remove themselves, they must leave
+13: Add voice audio recorder and enabkle speaker to support audio
+14. FE must match all Be implementations
+15: no bugs
 
 Rules:
-~~- Token stored in JavaScript variable, never in localStorage or sessionStorage~~
+~~- Token stored in Localstorage for persistence on refresh
+-- Loading spinner when authing on rfersh to prevent showing login and sign up form
 ~~- WebSocket auth token sent in handshake.auth.token~~
 ~~- All API calls use fetch (no axios)~~
 - On server error responses: show user-friendly message, never raw error
 - File must work when opened directly in browser pointing at Render URL
-
-~~Include visible test checklist panel showing Luka exactly what to test and in what order.~~
 ```
 
 ---
@@ -1147,3 +1157,8 @@ Error: Type 'X' is not assignable to type 'Y'
 ```
 
 ---
+
+Bugs
+
+1. on refresh, unread count is wrong? is the read recceipt not working?
+2. This eeror might be able the last message id, the issue is if a user have not entered a group, on tab refresh, he sees wrong lkabel for unread messages count, when a message comes in before he neters,m once he enters, only the last message that came in is fetched, the previous group messages are lost

@@ -1,3 +1,6 @@
+import { Server, Socket } from 'socket.io';
+import { Redis } from 'ioredis';
+
 import {
   ConnectedSocket,
   MessageBody,
@@ -10,8 +13,6 @@ import {
   WsException,
 } from '@nestjs/websockets';
 import { Inject, Logger, UseFilters, UseGuards } from '@nestjs/common';
-import { Server, Socket } from 'socket.io';
-import { Redis } from 'ioredis';
 
 import { PrismaService } from '../common/prisma/prisma.service';
 import { REDIS_CLIENT } from '../common/redis/redis.provider';
@@ -19,27 +20,16 @@ import { WsJwtGuard } from '../auth/guards/ws-jwt.guard';
 import { RoomMemberGuard } from '../auth/guards/room-member.guard';
 import { WsExceptionFilter } from '../common/filters/ws-exception.filter';
 import { PresenceService } from './presence.service';
+import { AiService } from '../ai/ai.service';
 import { MessageType } from '../generated/prisma/enums';
-
-// bugs
-// add misising socket events to room service => add leave rrom too
-// user out of the group does not get that a room has updated message => need lastmessage to shwo with iunread count uipdated
-// message should shopw in ui directly on send without waiting => and sending message from a user should not send the message to that same user
-// when tab srays inactive for a while, sending message does not go through for sender, apparently message went but no socket connection, for receciver , nothing, then a join room without refresh shows justb that klast message
-
-interface JoinRoomPayload {
-  roomId: string;
-  lastMessageId?: string; // client's most recent message — skip fetch if already up to date
-}
-
-interface SendMessagePayload {
-  roomId: string;
-  content: string;
-}
-
-interface TypingPayload {
-  roomId: string;
-}
+import {
+  JoinRoomPayload,
+  MessageDeliveredPayload,
+  MessagesReadPayload,
+  SendMessagePayload,
+  SubscribeRoomsPayload,
+  TypingPayload,
+} from '../@types/interface/chat';
 
 @WebSocketGateway({
   cors: { origin: process.env.NEXT_PUBLIC_APP_URL },
@@ -56,6 +46,7 @@ export class ChatGateway
   constructor(
     private readonly prisma: PrismaService,
     private readonly presenceService: PresenceService,
+    private readonly aiService: AiService,
     @Inject(REDIS_CLIENT) private readonly redis: Redis,
   ) {}
 
@@ -212,7 +203,7 @@ export class ChatGateway
 
     // Validate
     const trimmed = (content ?? '').replace(/<[^>]*>/g, '').trim(); // remove any html tag
-    if (!trimmed) {
+    if (!trimmed || trimmed.length > 4000) {
       throw new WsException('Message must be between 1 and 4000 characters');
     }
 
@@ -243,12 +234,20 @@ export class ChatGateway
     // Clear typing indicator when message is sent
     await this.presenceService.clearTyping(roomId, user.id);
 
-    // Broadcast to entire room (including sender)
-    this.server.to(roomId).emit('new_message', message);
+    // Broadcast to room EXCLUDING sender — sender adds optimistically on FE
+    client.to(roomId).emit('new_message', message);
 
-    // @ai detection — queued in PROMPT 8
+    // @ai detection — queue AI response job
     if (trimmed.toLowerCase().startsWith('@ai')) {
-      // TODO (PROMPT 8): AiService.queueAiResponse(roomId, message.id, user.id, trimmed)
+      await this.aiService.queueAiResponse({
+        roomId,
+        messageId: message.id,
+        userId: user.id,
+        userName: user.name,
+        question: trimmed,
+        server: this.server,
+        client,
+      });
     }
 
     return { status: 'ok', messageId: message.id };
@@ -292,5 +291,200 @@ export class ChatGateway
   ) {
     const user = client.data.user;
     await this.presenceService.clearTyping(payload.roomId, user.id);
+  }
+
+  // ── subscribe_rooms ───────────────────────────────────────────────────────────
+  // Client sends this after reconnect or login to receive room-level events
+  // (new_message, user_joined, user_left, room_deleted, room_removed)
+  // WITHOUT fetching a snapshot. No DB work beyond auth — just socket.join().
+
+  @UseGuards(WsJwtGuard)
+  @SubscribeMessage('subscribe_rooms')
+  async handleSubscribeRooms(
+    @ConnectedSocket() client: Socket,
+    @MessageBody() payload: SubscribeRoomsPayload,
+  ) {
+    const { roomIds } = payload;
+    if (!Array.isArray(roomIds) || roomIds.length === 0) return;
+    for (const roomId of roomIds) {
+      client.join(roomId);
+    }
+  }
+
+  // ── Public emit helpers (called by RoomsService) ──────────────────────────────
+
+  /** Emit to every socket currently in a room. */
+  emitToRoom(roomId: string, event: string, data: unknown) {
+    this.server.to(roomId).emit(event, data);
+  }
+
+  /** Emit to a single socket by socketId (looked up from Redis by caller). */
+  emitToSocket(socketId: string, event: string, data: unknown) {
+    this.server.to(socketId).emit(event, data);
+  }
+
+  // ── message_delivered ─────────────────────────────────────────────────────────
+  // Client emits this when a message arrives in their UI (not yet read).
+  // Tiers by room size to avoid flooding large rooms with receipt noise.
+
+  @UseGuards(WsJwtGuard)
+  @SubscribeMessage('message_delivered')
+  async handleMessageDelivered(
+    @ConnectedSocket() client: Socket,
+    @MessageBody() payload: MessageDeliveredPayload,
+  ) {
+    const { messageId } = payload;
+    const userId = client.data.user.id;
+
+    // Look up the message to get its room and sender
+    const message = await this.prisma.message.findUnique({
+      where: { id: messageId },
+      select: {
+        roomId: true,
+        userId: true,
+        room: { select: { memberCount: true } },
+      },
+    });
+    if (!message || !message.userId) return; // AI messages have no sender
+
+    const memberCount = message.room.memberCount;
+
+    // >= 100 members: no receipts
+    if (memberCount >= 100) return;
+
+    // Upsert deliveredAt receipt
+    await this.prisma.messageReceipt.upsert({
+      where: { messageId_userId: { messageId, userId } },
+      create: { messageId, userId, deliveredAt: new Date() },
+      update: { deliveredAt: new Date() },
+    });
+
+    if (memberCount >= 10) {
+      // Debounce: only notify sender once every 3s per message
+      const debounceKey = `receipt-debounce:${message.userId}:${messageId}`;
+      const alreadyScheduled = await this.redis.set(
+        debounceKey,
+        '1',
+        'EX',
+        3,
+        'NX',
+      );
+      if (!alreadyScheduled) return;
+
+      // Schedule the actual emit after 3s
+      setTimeout(async () => {
+        const senderSocketId = await this.redis.get(`socket:${message.userId}`);
+        if (!senderSocketId) return;
+        const deliveredCount = await this.prisma.messageReceipt.count({
+          where: { messageId, deliveredAt: { not: null } },
+        });
+        this.server
+          .to(senderSocketId)
+          .emit('receipt_update', { messageId, deliveredCount });
+      }, 3000);
+      return;
+    }
+
+    // < 10 members: notify sender immediately
+    const senderSocketId = await this.redis.get(`socket:${message.userId}`);
+    if (!senderSocketId) return;
+    const deliveredCount = await this.prisma.messageReceipt.count({
+      where: { messageId, deliveredAt: { not: null } },
+    });
+    this.server
+      .to(senderSocketId)
+      .emit('receipt_update', { messageId, deliveredCount });
+  }
+
+  // ── messages_read ─────────────────────────────────────────────────────────────
+  // Client emits this when the user has seen all messages up to upToMessageId.
+  // Bulk-marks them as read and notifies each unique sender.
+
+  @UseGuards(WsJwtGuard, RoomMemberGuard)
+  @SubscribeMessage('messages_read')
+  async handleMessagesRead(
+    @ConnectedSocket() client: Socket,
+    @MessageBody() payload: MessagesReadPayload,
+  ) {
+    const { roomId, upToMessageId } = payload;
+    const userId = client.data.user.id;
+
+    // Get the cursor message's timestamp
+    const cursor = await this.prisma.message.findUnique({
+      where: { id: upToMessageId },
+      select: { createdAt: true, room: { select: { memberCount: true } } },
+    });
+    if (!cursor) return;
+
+    const memberCount = cursor.room.memberCount;
+    if (memberCount >= 100) return; // no receipts for very large rooms
+
+    // Find all unread messages up to cursor for this room
+    const unread = await this.prisma.message.findMany({
+      where: {
+        roomId,
+        createdAt: { lte: cursor.createdAt },
+        userId: { not: null }, // skip AI messages
+        receipts: { none: { userId, readAt: { not: null } } },
+      },
+      select: { id: true, userId: true },
+    });
+
+    if (unread.length === 0) return;
+
+    const now = new Date();
+
+    // Bulk upsert all receipts in a transaction
+    await this.prisma.$transaction(
+      unread.map((m) =>
+        this.prisma.messageReceipt.upsert({
+          where: { messageId_userId: { messageId: m.id, userId } },
+          create: { messageId: m.id, userId, deliveredAt: now, readAt: now },
+          update: { readAt: now },
+        }),
+      ),
+    );
+
+    if (memberCount >= 10) {
+      // Debounce notifications per sender
+      const senderIds = [...new Set(unread.map((m) => m.userId as string))];
+      for (const senderId of senderIds) {
+        const debounceKey = `receipt-debounce:${senderId}:read:${roomId}`;
+        const alreadyScheduled = await this.redis.set(
+          debounceKey,
+          '1',
+          'EX',
+          3,
+          'NX',
+        );
+        if (alreadyScheduled) {
+          const senderIds_copy = senderId; // capture for closure
+          setTimeout(async () => {
+            const senderSocketId = await this.redis.get(
+              `socket:${senderIds_copy}`,
+            );
+            if (!senderSocketId) return;
+            this.server.to(senderSocketId).emit('receipt_update', {
+              roomId,
+              readBy: userId,
+              upToMessageId,
+            });
+          }, 3000);
+        }
+      }
+      return;
+    }
+
+    // < 10 members: notify each sender immediately
+    const senderIds = [...new Set(unread.map((m) => m.userId as string))];
+    for (const senderId of senderIds) {
+      const senderSocketId = await this.redis.get(`socket:${senderId}`);
+      if (!senderSocketId) continue;
+      this.server.to(senderSocketId).emit('receipt_update', {
+        roomId,
+        readBy: userId,
+        upToMessageId,
+      });
+    }
   }
 }

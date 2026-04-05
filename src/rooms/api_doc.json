@@ -1,0 +1,311 @@
+{
+  "module": "Rooms",
+  "baseUrl": "/api/rooms",
+  "note": "All endpoints require Authorization: Bearer <token>. Endpoints marked OWNER require the caller to be the room creator. Endpoints marked member require the caller to be any room member.",
+  "endpoints": [
+    {
+      "id": "create-room",
+      "method": "POST",
+      "path": "/api/rooms",
+      "auth": true,
+      "summary": "Create a new private channel. The caller is automatically set as OWNER.",
+      "request": {
+        "contentType": "application/json",
+        "body": {
+          "name": { "type": "string", "maxLength": 100, "required": false, "example": "general" },
+          "description": { "type": "string", "maxLength": 500, "required": false, "example": "General discussion channel" }
+        }
+      },
+      "responses": {
+        "201": {
+          "description": "Room created.",
+          "example": {
+            "success": true,
+            "statusCode": 201,
+            "message": "Room created",
+            "data": {
+              "id": "clh0abc123roomid0001",
+              "name": "general",
+              "description": "General discussion channel",
+              "type": "CHANNEL",
+              "isPrivate": true,
+              "createdBy": "clh0abc123userid0001",
+              "memberCount": 1,
+              "createdAt": "2026-04-04T10:00:00.000Z",
+              "updatedAt": "2026-04-04T10:00:00.000Z"
+            }
+          }
+        },
+        "401": { "description": "Missing or expired JWT." }
+      }
+    },
+    {
+      "id": "get-my-rooms",
+      "method": "GET",
+      "path": "/api/rooms",
+      "auth": true,
+      "summary": "List every room the caller belongs to, enriched with the last message and unread message count.",
+      "request": {},
+      "responses": {
+        "200": {
+          "description": "Room list.",
+          "example": {
+            "success": true,
+            "statusCode": 200,
+            "message": "Rooms fetched",
+            "data": [
+              {
+                "id": "clh0abc123roomid0001",
+                "name": "general",
+                "description": "General discussion",
+                "type": "CHANNEL",
+                "isPrivate": true,
+                "createdBy": "clh0abc123userid0001",
+                "memberCount": 5,
+                "createdAt": "2026-04-04T10:00:00.000Z",
+                "updatedAt": "2026-04-04T10:00:00.000Z",
+                "role": "OWNER",
+                "lastMessage": {
+                  "id": "clh0abc123msgid0001",
+                  "content": "Hello everyone!",
+                  "type": "TEXT",
+                  "createdAt": "2026-04-04T11:00:00.000Z",
+                  "userId": "clh0abc123userid0002"
+                },
+                "unreadCount": 3,
+                "dmPartner": null
+              }
+            ]
+          }
+        },
+        "401": { "description": "Missing or expired JWT." }
+      }
+    },
+    {
+      "id": "get-room",
+      "method": "GET",
+      "path": "/api/rooms/:id",
+      "auth": true,
+      "role": "member",
+      "summary": "Get a single room by ID. Caller must be a member.",
+      "request": {
+        "params": {
+          "id": { "type": "string", "required": true, "example": "clh0abc123roomid0001" }
+        }
+      },
+      "responses": {
+        "200": {
+          "description": "Room data.",
+          "example": {
+            "success": true,
+            "statusCode": 200,
+            "message": "Room fetched",
+            "data": {
+              "id": "clh0abc123roomid0001",
+              "name": "general",
+              "description": "General discussion",
+              "type": "CHANNEL",
+              "isPrivate": true,
+              "createdBy": "clh0abc123userid0001",
+              "memberCount": 5,
+              "createdAt": "2026-04-04T10:00:00.000Z",
+              "updatedAt": "2026-04-04T10:00:00.000Z"
+            }
+          }
+        },
+        "404": { "description": "Room not found or caller is not a member." },
+        "401": { "description": "Missing or expired JWT." }
+      }
+    },
+    {
+      "id": "get-members",
+      "method": "GET",
+      "path": "/api/rooms/:id/members",
+      "auth": true,
+      "role": "member",
+      "summary": "List all members of a room with their roles and join dates. Caller must be a member.",
+      "request": {
+        "params": {
+          "id": { "type": "string", "required": true, "example": "clh0abc123roomid0001" }
+        }
+      },
+      "responses": {
+        "200": {
+          "description": "Member list.",
+          "example": {
+            "success": true,
+            "statusCode": 200,
+            "message": "Members fetched",
+            "data": [
+              {
+                "userId": "clh0abc123userid0001",
+                "role": "OWNER",
+                "joinedAt": "2026-04-04T10:00:00.000Z",
+                "user": {
+                  "id": "clh0abc123userid0001",
+                  "name": "Alice",
+                  "email": "alice@example.com",
+                  "avatar": null
+                }
+              }
+            ]
+          }
+        },
+        "404": { "description": "Room not found or caller is not a member." },
+        "401": { "description": "Missing or expired JWT." }
+      }
+    },
+    {
+      "id": "leave-room",
+      "method": "DELETE",
+      "path": "/api/rooms/:id/leave",
+      "auth": true,
+      "role": "member",
+      "summary": "Leave a room. OWNER with remaining members must remove them or delete the room first. OWNER leaving as the last member deletes the room.",
+      "request": {
+        "params": {
+          "id": { "type": "string", "required": true, "example": "clh0abc123roomid0001" }
+        }
+      },
+      "responses": {
+        "200": {
+          "description": "Left successfully.",
+          "example": {
+            "success": true,
+            "statusCode": 200,
+            "message": "Left room",
+            "data": null
+          }
+        },
+        "404": { "description": "Caller is not a member of this room." },
+        "403": { "description": "OWNER attempted to leave while other members are still present." },
+        "401": { "description": "Missing or expired JWT." }
+      }
+    },
+    {
+      "id": "delete-room",
+      "method": "DELETE",
+      "path": "/api/rooms/:id",
+      "auth": true,
+      "role": "OWNER",
+      "summary": "Delete a room. Cascades to all members, messages, and read receipts. OWNER only.",
+      "request": {
+        "params": {
+          "id": { "type": "string", "required": true, "example": "clh0abc123roomid0001" }
+        }
+      },
+      "responses": {
+        "200": {
+          "description": "Room deleted.",
+          "example": {
+            "success": true,
+            "statusCode": 200,
+            "message": "Room deleted",
+            "data": null
+          }
+        },
+        "403": { "description": "Caller is not the room owner." },
+        "401": { "description": "Missing or expired JWT." }
+      }
+    },
+    {
+      "id": "open-dm",
+      "method": "POST",
+      "path": "/api/rooms/dm",
+      "auth": true,
+      "summary": "Open or retrieve a direct message room with another user. Idempotent — safe to call multiple times, always returns the same DM room.",
+      "request": {
+        "contentType": "application/json",
+        "body": {
+          "email": { "type": "string", "format": "email", "required": true, "example": "bob@example.com" }
+        }
+      },
+      "responses": {
+        "201": {
+          "description": "DM room (created or existing).",
+          "example": {
+            "success": true,
+            "statusCode": 201,
+            "message": "DM ready",
+            "data": {
+              "id": "clh0abc123roomid0099",
+              "name": null,
+              "description": null,
+              "type": "DM",
+              "isPrivate": true,
+              "createdBy": "clh0abc123userid0001",
+              "memberCount": 2,
+              "createdAt": "2026-04-04T10:00:00.000Z",
+              "updatedAt": "2026-04-04T10:00:00.000Z"
+            }
+          }
+        },
+        "404": { "description": "No user found with that email." },
+        "403": { "description": "Cannot DM yourself." },
+        "401": { "description": "Missing or expired JWT." }
+      }
+    },
+    {
+      "id": "invite-user",
+      "method": "POST",
+      "path": "/api/rooms/:id/invite",
+      "auth": true,
+      "role": "OWNER",
+      "summary": "Invite a registered user to a room by email. Idempotent — inviting an existing member is a no-op. OWNER only.",
+      "request": {
+        "params": {
+          "id": { "type": "string", "required": true, "example": "clh0abc123roomid0001" }
+        },
+        "contentType": "application/json",
+        "body": {
+          "email": { "type": "string", "format": "email", "required": true, "example": "bob@example.com" }
+        }
+      },
+      "responses": {
+        "201": {
+          "description": "User invited.",
+          "example": {
+            "success": true,
+            "statusCode": 201,
+            "message": "User invited",
+            "data": null
+          }
+        },
+        "404": { "description": "No registered user found with that email." },
+        "403": { "description": "Caller is not the room owner." },
+        "401": { "description": "Missing or expired JWT." }
+      }
+    },
+    {
+      "id": "remove-member",
+      "method": "DELETE",
+      "path": "/api/rooms/:id/members",
+      "auth": true,
+      "role": "OWNER",
+      "summary": "Remove a member from a room by email. OWNER only. To remove yourself as OWNER, use leave-room instead.",
+      "request": {
+        "params": {
+          "id": { "type": "string", "required": true, "example": "clh0abc123roomid0001" }
+        },
+        "contentType": "application/json",
+        "body": {
+          "email": { "type": "string", "format": "email", "required": true, "example": "bob@example.com" }
+        }
+      },
+      "responses": {
+        "200": {
+          "description": "Member removed.",
+          "example": {
+            "success": true,
+            "statusCode": 200,
+            "message": "Member removed",
+            "data": null
+          }
+        },
+        "404": { "description": "No user found with that email." },
+        "403": { "description": "Caller is not the room owner, or tried to remove themselves." },
+        "401": { "description": "Missing or expired JWT." }
+      }
+    }
+  ]
+}

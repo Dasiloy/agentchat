@@ -1,5 +1,6 @@
 import * as Joi from 'joi';
 
+import { BullModule } from '@nestjs/bullmq';
 import { Module, ValidationPipe } from '@nestjs/common';
 import { ConfigModule, ConfigService } from '@nestjs/config';
 import { APP_FILTER, APP_GUARD, APP_PIPE } from '@nestjs/core';
@@ -16,12 +17,13 @@ import { CommonModule } from './common/common.module';
 import { AuthModule } from './auth/auth.module';
 import { RoomsModule } from './rooms/rooms.module';
 import { GatewayModule } from './gateway/gateway.module';
-import { BullModule } from '@nestjs/bullmq';
+import { UsersModule } from './users/users.module';
+import { VoiceModule } from './voice/voice.module';
 
 @Module({
   imports: [
     ThrottlerModule.forRoot({
-      throttlers: [{ ttl: 60000, limit: 10 }],
+      throttlers: [{ ttl: 60000, limit: 20 }],
     }),
     ConfigModule.forRoot({
       cache: true,
@@ -81,6 +83,8 @@ import { BullModule } from '@nestjs/bullmq';
     AuthModule,
     RoomsModule,
     GatewayModule,
+    UsersModule,
+    VoiceModule,
   ],
   controllers: [AppController],
   providers: [

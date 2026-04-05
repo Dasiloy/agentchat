@@ -1,0 +1,143 @@
+{
+  "module": "Auth",
+  "baseUrl": "/api/auth",
+  "note": "All endpoints in this module are public except /me and /logout, which require a Bearer JWT in the Authorization header.",
+  "endpoints": [
+    {
+      "id": "register",
+      "method": "POST",
+      "path": "/api/auth/register",
+      "auth": false,
+      "summary": "Register a new user with email and password.",
+      "request": {
+        "contentType": "application/json",
+        "body": {
+          "email": { "type": "string", "format": "email", "required": true, "example": "alice@example.com" },
+          "password": { "type": "string", "minLength": 8, "required": true, "description": "Must contain uppercase, lowercase, number and symbol.", "example": "$Demo1234!" },
+          "name": { "type": "string", "required": true, "example": "Alice Becca" }
+        }
+      },
+      "responses": {
+        "201": {
+          "description": "User created. Returns a signed JWT.",
+          "example": {
+            "success": true,
+            "statusCode": 201,
+            "message": "User registered successfully",
+            "data": { "accessToken": "<jwt>" }
+          }
+        },
+        "409": { "description": "Email already registered." },
+        "400": { "description": "Validation failed (weak password, invalid email, missing field)." }
+      }
+    },
+    {
+      "id": "login",
+      "method": "POST",
+      "path": "/api/auth/login",
+      "auth": false,
+      "summary": "Log in with email and password.",
+      "request": {
+        "contentType": "application/json",
+        "body": {
+          "email": { "type": "string", "format": "email", "required": true, "example": "alice@example.com" },
+          "password": { "type": "string", "required": true, "example": "$Demo1234!" }
+        }
+      },
+      "responses": {
+        "200": {
+          "description": "Credentials valid. Returns a signed JWT.",
+          "example": {
+            "success": true,
+            "statusCode": 200,
+            "message": "User logged in successfully",
+            "data": { "accessToken": "<jwt>" }
+          }
+        },
+        "401": { "description": "Invalid email or password." }
+      }
+    },
+    {
+      "id": "google-oauth-init",
+      "method": "GET",
+      "path": "/api/auth/google",
+      "auth": false,
+      "summary": "Redirect the browser to Google's OAuth consent screen.",
+      "request": {},
+      "responses": {
+        "302": {
+          "description": "Redirects to Google. No JSON body.",
+          "note": "The Google OAuth app is currently in Testing mode. Only whitelisted Google accounts can complete this flow."
+        }
+      }
+    },
+    {
+      "id": "google-oauth-callback",
+      "method": "GET",
+      "path": "/api/auth/google/callback",
+      "auth": false,
+      "summary": "Google redirects back here after the user grants consent. Passport validates the code and the server issues a JWT.",
+      "request": {
+        "query": {
+          "code": { "type": "string", "description": "OAuth authorisation code — set by Google, not the client." }
+        }
+      },
+      "responses": {
+        "302": {
+          "description": "Redirects to NEXT_PUBLIC_APP_URL/?token=<jwt>. The frontend reads the token from the query string.",
+          "headers": {
+            "Location": { "example": "https://your-frontend.example.com/?token=<jwt>" }
+          }
+        },
+        "401": { "description": "Google authentication failed or account not whitelisted (Testing mode)." }
+      }
+    },
+    {
+      "id": "me",
+      "method": "GET",
+      "path": "/api/auth/me",
+      "auth": true,
+      "summary": "Return the profile of the currently authenticated user.",
+      "request": {},
+      "responses": {
+        "200": {
+          "description": "Authenticated user profile.",
+          "example": {
+            "success": true,
+            "statusCode": 200,
+            "message": "User fetched successfully",
+            "data": {
+              "id": "clh0abc123userid0001",
+              "email": "alice@example.com",
+              "name": "Alice Becca",
+              "avatar": null,
+              "createdAt": "2026-04-01T12:00:00.000Z",
+              "updatedAt": "2026-04-04T10:15:00.000Z"
+            }
+          }
+        },
+        "401": { "description": "Missing or expired JWT." }
+      }
+    },
+    {
+      "id": "logout",
+      "method": "POST",
+      "path": "/api/auth/logout",
+      "auth": true,
+      "summary": "Clear the Redis session cache for the current user. The JWT itself is not blacklisted (see Known Limitations in README).",
+      "request": {},
+      "responses": {
+        "200": {
+          "description": "Cache cleared.",
+          "example": {
+            "success": true,
+            "statusCode": 200,
+            "message": "Logged out successfully",
+            "data": null
+          }
+        },
+        "401": { "description": "Missing or expired JWT." }
+      }
+    }
+  ]
+}

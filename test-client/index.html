@@ -702,6 +702,7 @@
       let socket = null; // Socket.io instance
       const lastSeenId = new Map(); // roomId → id of newest message the client has
       const roomMeta = new Map(); // roomId → { preview, unreadCount } for sidebar updates
+      const messagesCache = new Map(); // roomId → array of message objects (for instant room switch)
 
       // ── Boot ──────────────────────────────────────────────────────────────────
       (function boot() {
@@ -831,12 +832,13 @@
         empty.style.display = 'none';
 
         rooms.forEach((room) => {
-          // seed / refresh client-side meta
+          // seed / refresh client-side meta — preserve unreadCount=0 if user already has room open
+          const isActive = activeRoom?.id === room.id;
           roomMeta.set(room.id, {
             preview: room.lastMessage
               ? trunc(room.lastMessage.content, 26)
               : 'No messages',
-            unreadCount: room.unreadCount ?? 0,
+            unreadCount: isActive ? 0 : (room.unreadCount ?? 0),
           });
           const div = document.createElement('div');
           div.className =
@@ -850,6 +852,11 @@
           div.addEventListener('click', () => openRoom(room));
           scroll.appendChild(div);
         });
+
+        // Subscribe to all rooms so we receive events without needing to open them
+        if (socket?.connected && rooms.length > 0) {
+          socket.emit('subscribe_rooms', { roomIds: rooms.map((r) => r.id) });
+        }
       }
 
       function renderRoomRow(div, displayName, roomId) {
@@ -882,61 +889,63 @@
       async function openRoom(roomSummary) {
         activeRoom = roomSummary;
 
-        // highlight in sidebar
+        // Highlight in sidebar + clear badge immediately
         document.querySelectorAll('.room-row').forEach((el) => {
           el.classList.toggle('active', el.dataset.id === roomSummary.id);
         });
+        const meta = roomMeta.get(roomSummary.id);
+        if (meta) { meta.unreadCount = 0; roomMeta.set(roomSummary.id, meta); }
+        const badge = document.querySelector(`.room-row[data-id="${roomSummary.id}"] .badge`);
+        if (badge) badge.remove();
 
-        // fetch room + members in parallel
+        // Show cached messages instantly (no flicker, no waiting for HTTP/socket)
+        const area = document.getElementById('chat-area');
+        const cached = messagesCache.get(roomSummary.id);
+        if (cached && cached.length > 0) {
+          renderMessages(cached);
+        } else {
+          area.innerHTML = '';
+        }
+        typingUsers.clear();
+        const ti = document.getElementById('typing-indicator');
+        if (ti) ti.textContent = '';
+
+        // Show room detail shell immediately using what we know from sidebar
+        // (full detail + members will replace this after HTTP resolves)
+        document.getElementById('main-placeholder').style.display = 'none';
+        document.getElementById('room-detail').style.display = 'flex';
+
+        // Build room from sidebar data — no need to refetch GET /rooms/:id
+        const room = { ...roomSummary };
+        if (room.type === 'DM') {
+          room.displayName = roomSummary.dmPartner?.name || 'DM';
+        } else {
+          room.displayName = room.name || 'Unnamed room';
+        }
+        activeRoom = { ...activeRoom, displayName: room.displayName };
+        renderRoomDetail(room);
+
+        // Update sidebar display name
+        const sidebarRow = document.querySelector(`.room-row[data-id="${room.id}"]`);
+        if (sidebarRow) {
+          const nameEl = sidebarRow.querySelector('.rname');
+          if (nameEl) nameEl.textContent = room.displayName;
+        }
+
+        // Only fetch members (one request instead of two)
         try {
-          const headers = { Authorization: `Bearer ${token}` };
-          const [roomRes, membersRes] = await Promise.all([
-            fetch(`${API}/rooms/${roomSummary.id}`, { headers }),
-            fetch(`${API}/rooms/${roomSummary.id}/members`, { headers }),
-          ]);
-          if (!roomRes.ok) return toast('Could not load room', 'error');
-          const roomJson = await roomRes.json();
-          const room = { ...roomJson.data, role: roomSummary.role };
+          const membersRes = await fetch(`${API}/rooms/${room.id}/members`, {
+            headers: { Authorization: `Bearer ${token}` },
+          });
+          // Guard: user may have switched rooms while HTTP was in flight
+          if (activeRoom?.id !== room.id) return;
           const members = membersRes.ok ? (await membersRes.json()).data : [];
-
-          // for DM rooms, use dmPartner from list response, or fall back to members fetch
-          if (room.type === 'DM') {
-            const partner =
-              roomSummary.dmPartner ||
-              members.find((m) => m.userId !== currentUser?.id)?.user;
-            room.displayName = partner ? partner.name : 'DM';
-          } else {
-            room.displayName = room.name || 'Unnamed room';
-          }
-
-          activeRoom = { ...activeRoom, displayName: room.displayName };
-
-          renderRoomDetail(room);
           renderMembers(members);
-          document.getElementById('chat-area').innerHTML = '';
-          typingUsers.clear();
-          const ti = document.getElementById('typing-indicator');
-          if (ti) ti.textContent = '';
-
-          // update sidebar row: partner name + clear unread badge
-          const sidebarRow = document.querySelector(
-            `.room-row[data-id="${room.id}"]`,
-          );
-          if (sidebarRow) {
-            const nameEl = sidebarRow.querySelector('.rname');
-            if (nameEl) nameEl.textContent = room.displayName;
-            const badge = sidebarRow.querySelector('.badge');
-            if (badge) badge.remove();
-          }
-          const meta = roomMeta.get(room.id);
-          if (meta) {
-            meta.unreadCount = 0;
-            roomMeta.set(room.id, meta);
-          }
-
           joinSocketRoom(room.id);
         } catch {
-          toast('Network error', 'error');
+          // Members failed — still show room and join socket
+          renderMembers([]);
+          joinSocketRoom(room.id);
         }
       }
 
@@ -1195,24 +1204,50 @@
         if (socket?.connected) return;
         socket = io({ auth: { token } });
 
-        socket.on('connect', () => toast('Connected', 'success'));
+        socket.on('connect', () => {
+          toast('Connected', 'success');
+          // Re-subscribe to all known rooms so we receive events while not actively in them
+          const roomIds = [...lastSeenId.keys()];
+          if (roomIds.length > 0) {
+            socket.emit('subscribe_rooms', { roomIds });
+          }
+          // Rejoin active room to get any messages we missed while disconnected
+          if (activeRoom) {
+            joinSocketRoom(activeRoom.id);
+          }
+        });
+
         socket.on('disconnect', () => toast('Disconnected', 'error'));
         socket.on('ephemeral', (e) => toast(e.message, 'error'));
 
         socket.on('room_snapshot', ({ roomId, messages }) => {
-          if (activeRoom?.id !== roomId) return;
           if (messages.length > 0) {
+            // Full or delta load — replace/extend cache
+            const existing = messagesCache.get(roomId) || [];
+            const existingIds = new Set(existing.map((m) => m.id));
+            const newMsgs = messages.filter((m) => !existingIds.has(m.id));
+            const merged = [...existing, ...newMsgs].sort(
+              (a, b) => new Date(a.createdAt) - new Date(b.createdAt),
+            );
+            messagesCache.set(roomId, merged);
             lastSeenId.set(roomId, messages[messages.length - 1].id);
-            renderMessages(messages);
+            // Only re-render if this is the currently active room
+            if (activeRoom?.id === roomId) renderMessages(merged);
           }
-          // messages === [] means client was up to date — don't wipe the chat area
+          // messages === [] means client was up to date — cache already correct, don't wipe
         });
 
         socket.on('new_message', (msg) => {
           lastSeenId.set(msg.roomId, msg.id); // track even for rooms not currently open
+          // Add to cache
+          const cached = messagesCache.get(msg.roomId) || [];
+          if (!cached.find((m) => m.id === msg.id)) {
+            cached.push(msg);
+            messagesCache.set(msg.roomId, cached);
+          }
           const isActive = activeRoom?.id === msg.roomId;
           const preview = trunc(msg.content, 26);
-          // increment unread only if not the active room
+          // only increment unread for non-active rooms (active room is being read)
           updateRoomRowMeta(msg.roomId, preview, isActive ? 0 : 1);
           if (!isActive) return;
           appendMessages([msg]);
@@ -1232,6 +1267,50 @@
           if (activeRoom?.id !== roomId) return;
           if (userId === currentUser?.id) return; // don't show own typing
           updateTypingIndicator(userId, name, isTyping);
+        });
+
+        // Room was deleted by owner — remove from sidebar, close if active
+        socket.on('room_deleted', ({ roomId }) => {
+          const row = document.querySelector(`.room-row[data-id="${roomId}"]`);
+          if (row) row.remove();
+          roomMeta.delete(roomId);
+          lastSeenId.delete(roomId);
+          if (activeRoom?.id === roomId) {
+            activeRoom = null;
+            closeRoomDetail();
+            toast('This room was deleted', 'error');
+          }
+        });
+
+        // This user was removed from a room by the owner
+        socket.on('room_removed', ({ roomId }) => {
+          const row = document.querySelector(`.room-row[data-id="${roomId}"]`);
+          if (row) row.remove();
+          roomMeta.delete(roomId);
+          lastSeenId.delete(roomId);
+          if (activeRoom?.id === roomId) {
+            activeRoom = null;
+            closeRoomDetail();
+            toast('You were removed from this room', 'error');
+          }
+        });
+
+        // Owner invited us — add room to sidebar without HTTP refresh
+        socket.on('room_pushed', ({ room }) => {
+          if (!room) return;
+          roomMeta.set(room.id, { preview: 'No messages', unreadCount: 0 });
+          const scroll = document.getElementById('rooms-scroll');
+          const empty = document.getElementById('rooms-empty');
+          empty.style.display = 'none';
+          const div = document.createElement('div');
+          div.className = 'room-row';
+          div.dataset.id = room.id;
+          renderRoomRow(div, room.name || 'DM', room.id);
+          div.addEventListener('click', () => openRoom({ ...room, role: 'MEMBER' }));
+          scroll.appendChild(div);
+          // subscribe to events in this room immediately
+          socket.emit('subscribe_rooms', { roomIds: [room.id] });
+          toast(`You were added to "${room.name || 'a room'}"`, 'success');
         });
       }
 
@@ -1287,17 +1366,62 @@
         btn.disabled = true;
         socket.emit('typing_stop', { roomId: activeRoom.id });
         clearTimeout(typingTimeout);
-        socket.emit(
-          'send_message',
-          { roomId: activeRoom.id, content },
-          (ack) => {
-            btn.disabled = false;
-          },
-        );
-        // optimistic clear
+
+        const optId = `opt-${Date.now()}`;
+        const optimisticMsg = {
+          id: optId,
+          roomId: activeRoom.id,
+          userId: currentUser.id,
+          content,
+          createdAt: new Date().toISOString(),
+          user: { id: currentUser.id, name: currentUser.name, avatar: currentUser.avatar },
+        };
+
+        // Add to cache immediately so room switch preserves it
+        const cached = messagesCache.get(activeRoom.id) || [];
+        cached.push(optimisticMsg);
+        messagesCache.set(activeRoom.id, cached);
+
+        // Show pending bubble immediately (grey dot, dimmed)
+        const area = document.getElementById('chat-area');
+        const bubble = buildMessageEl(optimisticMsg, true);
+        area.appendChild(bubble);
+        area.scrollTop = area.scrollHeight;
+
+        // Clear input early so UX feels instant
         input.value = '';
         input.style.height = '40px';
-        // re-enable immediately (server will broadcast new_message back)
+
+        // Update sidebar preview for sender immediately (sender won't get new_message)
+        updateRoomRowMeta(activeRoom.id, trunc(content, 26), 0);
+
+        const capturedRoomId = activeRoom.id;
+        socket.emit(
+          'send_message',
+          { roomId: capturedRoomId, content },
+          (ack) => {
+            btn.disabled = false;
+            if (ack?.messageId) {
+              lastSeenId.set(capturedRoomId, ack.messageId);
+              // Upgrade the optimistic bubble to the real persisted message
+              const el = document.querySelector(`[data-msg-id="${optId}"]`);
+              if (el) {
+                el.dataset.msgId = ack.messageId;
+                // Replace optimistic entry in cache with real id
+                const cached = messagesCache.get(capturedRoomId) || [];
+                const idx = cached.findIndex((m) => m.id === optId);
+                if (idx !== -1) cached[idx] = { ...cached[idx], id: ack.messageId };
+                messagesCache.set(capturedRoomId, cached);
+                const statusEl = el.querySelector('.msg-status');
+                if (statusEl) { statusEl.textContent = '✓'; statusEl.style.color = '#555'; }
+                const bubbleEl = el.querySelector('div[style*="background"]');
+                if (bubbleEl) bubbleEl.style.opacity = '1';
+              }
+              // Tell server it was delivered (triggers receipt_update back to sender)
+              socket.emit('message_delivered', { messageId: ack.messageId });
+            }
+          },
+        );
         btn.disabled = false;
       }
 
@@ -1331,7 +1455,7 @@
         area.scrollTop = area.scrollHeight;
       }
 
-      function buildMessageEl(msg) {
+      function buildMessageEl(msg, pending = false) {
         const isMine = msg.userId === currentUser?.id;
         const name = msg.user?.name || 'Unknown';
         const time = new Date(msg.createdAt).toLocaleTimeString([], {
@@ -1340,12 +1464,31 @@
         });
         const div = document.createElement('div');
         div.style.cssText = `display:flex;flex-direction:column;align-items:${isMine ? 'flex-end' : 'flex-start'};padding:3px 20px`;
+        // status dot: ● sending (grey), ✓ sent (dim), ✓✓ delivered (blue)
+        const statusHtml = isMine
+          ? `<span class="msg-status" style="font-size:10px;color:${pending ? '#555' : '#444'};margin-top:2px">${pending ? '● sending' : '✓'}</span>`
+          : '';
         div.innerHTML = `
           ${!isMine ? `<div style="font-size:11px;color:#555;margin-bottom:2px">${esc(name)}</div>` : ''}
-          <div style="max-width:70%;background:${isMine ? '#2a3a5c' : '#1e1e1e'};border-radius:10px;padding:8px 12px;font-size:14px;line-height:1.4">${esc(msg.content)}</div>
-          <div style="font-size:10px;color:#444;margin-top:2px">${time}</div>
+          <div style="max-width:70%;background:${isMine ? '#2a3a5c' : '#1e1e1e'};border-radius:10px;padding:8px 12px;font-size:14px;line-height:1.4;opacity:${pending ? '0.6' : '1'}">${esc(msg.content)}</div>
+          <div style="display:flex;gap:4px;align-items:center;margin-top:2px">
+            <span style="font-size:10px;color:#444">${time}</span>
+            ${statusHtml}
+          </div>
         `;
+        if (msg.id) div.dataset.msgId = msg.id;
         return div;
+      }
+
+      function markMessageDelivered(msgId) {
+        const el = document.querySelector(`[data-msg-id="${msgId}"] .msg-status`);
+        if (el) {
+          el.textContent = '✓✓';
+          el.style.color = '#7c9ef8';
+        }
+        // also remove pending opacity
+        const bubble = document.querySelector(`[data-msg-id="${msgId}"] div[style*="background"]`);
+        if (bubble) bubble.style.opacity = '1';
       }
 
       // ── UI helpers ────────────────────────────────────────────────────────────
@@ -1386,6 +1529,7 @@
           socket = null;
         }
         lastSeenId.clear();
+        messagesCache.clear();
       }
 
       function closeRoomDetail() {

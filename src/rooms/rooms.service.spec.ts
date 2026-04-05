@@ -2,6 +2,8 @@ import { ForbiddenException, NotFoundException } from '@nestjs/common';
 import { Test, TestingModule } from '@nestjs/testing';
 
 import { PrismaService } from '../common/prisma/prisma.service';
+import { REDIS_CLIENT } from '../common/redis/redis.provider';
+import { ChatGateway } from '../gateway/chat.gateway';
 import { MemberRole, RoomType } from '../generated/prisma/enums';
 import { RoomsService } from './rooms.service';
 
@@ -52,6 +54,8 @@ describe('RoomsService', () => {
       providers: [
         RoomsService,
         { provide: PrismaService, useValue: prisma },
+        { provide: ChatGateway, useValue: { emitToRoom: jest.fn(), emitToSocket: jest.fn() } },
+        { provide: REDIS_CLIENT, useValue: { get: jest.fn().mockResolvedValue(null) } },
       ],
     }).compile();
 
