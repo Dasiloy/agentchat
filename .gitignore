@@ -59,3 +59,8 @@ pids
 report.[0-9]*.[0-9]*.[0-9]*.[0-9]*.json
 
 /src/generated/prisma
+
+# Prisma config compiled artifacts (prisma.config.ts must not be compiled by nest build)
+prisma.config.js
+prisma.config.js.map
+prisma.config.d.ts

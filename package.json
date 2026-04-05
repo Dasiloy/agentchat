@@ -7,7 +7,7 @@
   "license": "UNLICENSED",
   "scripts": {
     "build": "nest build",
-    "postinstall": "prisma generate",
+    "postinstall": "node -e \"['prisma.config.js','prisma.config.js.map','prisma.config.d.ts'].forEach(f=>{try{require('fs').unlinkSync(f)}catch(_){}})\" && prisma generate",
     "format": "prettier --write \"src/**/*.ts\" \"test/**/*.ts\"",
     "start": "nest start",
     "start:dev": "nest start --watch",
