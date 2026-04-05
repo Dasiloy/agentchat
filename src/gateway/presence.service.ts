@@ -34,7 +34,7 @@ export class PresenceService {
   async setOffline(userId: string): Promise<void> {
     await Promise.all([
       this.redis.del(`presence:${userId}`),
-      this.prisma.user.update({
+      this.prisma.user.updateMany({
         where: { id: userId },
         data: { lastSeenAt: new Date() },
       }),

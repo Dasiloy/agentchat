@@ -33,7 +33,7 @@ export class ContextService {
    * - If the estimated token count exceeds 100 000, oldest messages are trimmed.
    * - Fires triggerSummaryUpdate() as a side-effect when count > 50 (fire-and-forget).
    */
-  async buildContext(roomId: string, question: string): Promise<ChatMessage[]> {
+  async buildContext(roomId: string, question: string, askedBy?: string): Promise<ChatMessage[]> {
     // 1. Total message count in room
     const totalCount = await this.prisma.message.count({ where: { roomId } });
 
@@ -106,13 +106,21 @@ export class ContextService {
       );
     }
 
-    // 4. Strip @ai prefix from question and append as final user turn
-    const cleanQuestion = question.replace(/^@ai\s*/i, '').trim();
+    // 4. Strip AI trigger prefix (handles @ai, "at ai", "hey ai", voice variants)
+    //    and append as the final user turn attributed to the asker — consistent
+    //    with how every other message in context is formatted ("Name: content").
+    const cleanQuestion = question
+      .replace(/(?:@ai|at\s+a\.?i\.?|hey\s+ai)\b[,\s]*/gi, '')
+      .trim();
+
+    const attributedQuestion = askedBy
+      ? `${askedBy}: ${cleanQuestion}`
+      : cleanQuestion;
 
     const messages: ChatMessage[] = [
       { role: 'system', content: systemPrompt },
       ...conversationMessages,
-      { role: 'user', content: cleanQuestion },
+      { role: 'user', content: attributedQuestion },
     ];
 
     // 5. Token guard: rough estimate (1 token ≈ 4 chars), trim oldest if over limit

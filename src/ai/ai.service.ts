@@ -52,7 +52,7 @@ export class AiService {
     // Add job to BullMQ
     const job = await this.aiQueue.add(
       AI_RESPONSE,
-      { roomId, messageId, userId, question, tts },
+      { roomId, messageId, userId, userName, question, tts },
       {
         attempts: 2,
         backoff: { type: 'fixed', delay: 3000 },

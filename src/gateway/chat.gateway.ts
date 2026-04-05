@@ -238,7 +238,7 @@ export class ChatGateway
     client.to(roomId).emit('new_message', message);
 
     // @ai detection — queue AI response job
-    if (trimmed.toLowerCase().startsWith('@ai')) {
+    if (/(?:@ai|at\s+a\.?i\.?|hey\s+ai)\b/i.test(trimmed)) {
       await this.aiService.queueAiResponse({
         roomId,
         messageId: message.id,
@@ -305,6 +305,12 @@ export class ChatGateway
     @MessageBody() payload: SubscribeRoomsPayload,
   ) {
     const { roomIds } = payload;
+
+    // Always register the socket mapping so the user can receive direct events
+    // (DM room_pushed, invite notifications) even if they haven't opened any room.
+    const user = client.data.user;
+    await this.redis.set(`socket:${user.id}`, client.id, 'EX', 86400);
+
     if (!Array.isArray(roomIds) || roomIds.length === 0) return;
     for (const roomId of roomIds) {
       client.join(roomId);

@@ -20,6 +20,7 @@ export interface AiJobData {
   roomId: string;
   messageId: string;
   userId: string;
+  userName: string;
   question: string;
   tts?: boolean;
 }

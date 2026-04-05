@@ -462,3 +462,15 @@ This project is **proprietary and unlicensed** — all rights reserved.
 No part of this source code may be reproduced, distributed, or used without the prior written permission of the author.
 
 Copyright &copy; 2026 [Dasiloy](https://github.com/dasiloy). See [LICENSE](LICENSE) for details.
+
+feat.
+
+1. add session mnangement and refresh token, keep access token for 1day and refresh token for 7days
+
+2. fine tiune ai response to be more human, let it behave like a member of the group
+
+Bugs
+
+1. On invite user the inviting user, the owner of the rrom , is not getting the updated team meber
+
+2. in some ai response @recipient (same appears multiplke times,) we need to prevent this

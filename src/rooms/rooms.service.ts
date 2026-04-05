@@ -486,13 +486,21 @@ export class RoomsService {
         },
       });
 
-      // Push the room to the dm user immediately if they are online
+      // Push the room to the dm user immediately if they are online.
+      // Include the caller as dmPartner so the recipient sees the sender's name
+      // in the sidebar without needing a refresh.
       const invitedSocketId = await this.redis.get(`socket:${target.id}`);
       if (invitedSocketId) {
-        const room = await this.prisma.room.findUnique({
-          where: { id: dm.id },
+        const [room, caller] = await Promise.all([
+          this.prisma.room.findUnique({ where: { id: dm.id } }),
+          this.prisma.user.findUnique({
+            where: { id: callerId },
+            select: { id: true, name: true, avatar: true },
+          }),
+        ]);
+        this.gateway.emitToSocket(invitedSocketId, 'room_pushed', {
+          room: { ...room, dmPartner: caller },
         });
-        this.gateway.emitToSocket(invitedSocketId, 'room_pushed', { room });
       }
 
       return dm;

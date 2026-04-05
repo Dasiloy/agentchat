@@ -30,7 +30,7 @@ export class VoiceProcessor extends WorkerHost {
   }
 
   private async handleTranscribe(job: Job): Promise<void> {
-    const { messageId, audioUrl, mimeType, roomId, userId } = job.data;
+    const { messageId, audioUrl, mimeType, roomId, userId, userName } = job.data;
 
     const transcript = await this.voiceService.transcribeVoice(
       messageId,
@@ -41,11 +41,15 @@ export class VoiceProcessor extends WorkerHost {
 
     // If the voice message is directed at AI, queue a response with TTS enabled.
     // Voice in → audio out: tts is always true for voice-triggered AI.
-    if (/^@ai\s*/i.test(transcript)) {
+    // Whisper transcribes spoken "@ai" in several ways depending on accent/speed:
+    //   "@ai", "at ai", "at a.i.", "hey ai", "@AI", "At AI", etc.
+    // Match all of them, case-insensitively, as the first word(s) of the transcript.
+    const AI_TRIGGER = /(?:@ai|at\s+a\.?i\.?|hey\s+ai)\b/i;
+    if (AI_TRIGGER.test(transcript.trim())) {
       this.gateway.emitToRoom(roomId, 'ai_thinking', { triggeredBy: 'Voice' });
       await this.aiQueue.add(
         AI_RESPONSE,
-        { roomId, messageId, userId, question: transcript, tts: true },
+        { roomId, messageId, userId, userName, question: transcript, tts: true },
         { attempts: 2, backoff: { type: 'fixed', delay: 3000 } },
       );
     }

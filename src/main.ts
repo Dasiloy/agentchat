@@ -14,6 +14,18 @@ import { ConfigService } from '@nestjs/config';
 
 import { AppModule } from './app.module';
 
+const logger = new Logger('Process');
+
+process.on('uncaughtException', (err: Error) => {
+  logger.error(`Uncaught exception: ${err.message}`, err.stack);
+});
+
+process.on('unhandledRejection', (reason: unknown) => {
+  const message = reason instanceof Error ? reason.message : String(reason);
+  const stack = reason instanceof Error ? reason.stack : undefined;
+  logger.error(`Unhandled promise rejection: ${message}`, stack);
+});
+
 async function bootstrap() {
   const app = await NestFactory.create<NestExpressApplication>(AppModule, {
     rawBody: true,

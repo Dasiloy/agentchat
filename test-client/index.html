@@ -468,6 +468,18 @@
         50% { opacity: 0.5; }
       }
 
+      /* @mention highlights */
+      .mention {
+        font-weight: 600;
+        border-radius: 3px;
+        padding: 0 2px;
+        color: #7c9ef8;
+      }
+      .mention.mention-self {
+        background: rgba(124, 158, 248, 0.15);
+        color: #a5c0ff;
+      }
+
       /* Audio player in bubbles */
       .msg-audio {
         margin-top: 6px;
@@ -506,6 +518,129 @@
       #toast.success {
         border-color: #14532d;
         color: #4ade80;
+      }
+
+      /* ── Mobile back / settings buttons (hidden on desktop) ── */
+      #back-btn {
+        display: none;
+        background: transparent;
+        color: #7c9ef8;
+        padding: 6px 8px;
+        font-size: 22px;
+        min-width: 40px;
+        min-height: 40px;
+        align-items: center;
+        justify-content: center;
+        flex-shrink: 0;
+      }
+      #room-settings-btn {
+        display: none;
+        background: transparent;
+        color: #666;
+        padding: 6px 8px;
+        font-size: 18px;
+        min-width: 40px;
+        min-height: 40px;
+        align-items: center;
+        justify-content: center;
+        flex-shrink: 0;
+      }
+
+      /* ── Mobile layout ── */
+      @media (max-width: 768px) {
+        /* Sidebar and main stack; only one visible at a time */
+        #app {
+          position: relative;
+          overflow: hidden;
+        }
+        #sidebar {
+          position: fixed;
+          inset: 0;
+          width: 100%;
+          z-index: 100;
+          transform: translateX(0);
+          transition: transform 0.25s ease;
+        }
+        #sidebar.mobile-hidden {
+          transform: translateX(-100%);
+          pointer-events: none;
+        }
+        #main {
+          position: fixed;
+          inset: 0;
+          transform: translateX(100%);
+          transition: transform 0.25s ease;
+        }
+        #main.mobile-visible {
+          transform: translateX(0);
+        }
+
+        /* Show nav buttons */
+        #back-btn       { display: flex; }
+        #room-settings-btn { display: flex; }
+
+        /* Collapse room-actions panel behind the settings button */
+        #room-actions {
+          display: none;
+          overflow: hidden;
+        }
+        #room-actions.expanded {
+          display: flex;
+        }
+
+        /* Prevent iOS zoom on input focus (font-size must be >= 16px) */
+        input, textarea, select {
+          font-size: 16px !important;
+        }
+
+        /* Touch-friendly targets */
+        button {
+          min-height: 44px;
+        }
+        .room-row {
+          padding: 12px 10px;
+          min-height: 52px;
+        }
+        #mic-btn {
+          min-width: 48px;
+          padding: 0;
+        }
+        #send-btn {
+          min-width: 64px;
+        }
+
+        /* Audio player fills bubble width on small screens */
+        .msg-audio {
+          max-width: 100%;
+          width: 100%;
+        }
+
+        /* Toast above thumb reach */
+        #toast {
+          bottom: 80px;
+          left: 12px;
+          right: 12px;
+          max-width: none;
+        }
+
+        /* Room header layout */
+        #room-header {
+          padding: 10px 12px;
+          gap: 6px;
+        }
+        #room-header .rh-name {
+          font-size: 15px;
+        }
+
+        /* Slightly more padding for chat compose */
+        #chat-compose {
+          padding: 10px 12px;
+          padding-bottom: env(safe-area-inset-bottom, 10px);
+        }
+        #room-footer {
+          padding: 8px 12px;
+          padding-bottom: env(safe-area-inset-bottom, 8px);
+        }
       }
     </style>
   </head>
@@ -647,13 +782,15 @@
         <!-- Room detail (shown when a room is selected) -->
         <div id="room-detail">
           <div id="room-header">
-            <div>
+            <button id="back-btn" onclick="showMobileSidebar()" title="Back to rooms">&#8592;</button>
+            <div style="flex:1;min-width:0">
               <div class="rh-name" id="rh-name">—</div>
               <div class="rh-meta">
                 <span id="rh-count">0</span> members ·
                 <span id="rh-type" class="rh-type">CHANNEL</span>
               </div>
             </div>
+            <button id="room-settings-btn" onclick="toggleRoomActions()" title="Room settings">⚙️</button>
           </div>
 
           <div id="room-actions">
@@ -789,6 +926,27 @@
       // User search debounce
       let userSearchTimer = null;
 
+      // ── Mobile panel helpers ──────────────────────────────────────────────────
+      function isMobile() { return window.innerWidth <= 768; }
+
+      function showMobileChat() {
+        if (!isMobile()) return;
+        document.getElementById('sidebar').classList.add('mobile-hidden');
+        document.getElementById('main').classList.add('mobile-visible');
+      }
+
+      function showMobileSidebar() {
+        if (!isMobile()) return;
+        document.getElementById('sidebar').classList.remove('mobile-hidden');
+        document.getElementById('main').classList.remove('mobile-visible');
+        // Keep activeRoom set so incoming messages still work;
+        // just re-highlight the active row in sidebar
+      }
+
+      function toggleRoomActions() {
+        document.getElementById('room-actions').classList.toggle('expanded');
+      }
+
       // ── Boot ──────────────────────────────────────────────────────────────────
       (function boot() {
         const t = new URLSearchParams(location.search).get('token');
@@ -843,7 +1001,10 @@
       });
 
       // ── Voice recording ───────────────────────────────────────────────────────
+      let voiceUploading = false; // lock — prevent double-send
+
       async function toggleVoice() {
+        if (voiceUploading) return; // uploading in progress, ignore
         if (isRecording) {
           stopVoice();
         } else {
@@ -877,11 +1038,32 @@
         isRecording = false;
         const btn = document.getElementById('mic-btn');
         btn.classList.remove('recording');
-        btn.title = 'Record voice message';
+        btn.title = 'Stop recording — uploading…';
+        // mic stays disabled (voiceUploading=true set in uploadVoice)
       }
 
       async function uploadVoice(blob) {
         if (!activeRoom) return;
+        voiceUploading = true;
+        const btn = document.getElementById('mic-btn');
+        btn.disabled = true;
+        btn.textContent = '⏳';
+        btn.title = 'Uploading…';
+
+        // Optimistic placeholder bubble for the sender
+        const optId = `voice-opt-${Date.now()}`;
+        const area = document.getElementById('chat-area');
+        const placeholder = buildMessageEl({
+          id: optId,
+          userId: currentUser.id,
+          content: '🎤 Sending voice message…',
+          type: 'VOICE',
+          createdAt: new Date().toISOString(),
+          user: currentUser,
+        }, true);
+        area.appendChild(placeholder);
+        area.scrollTop = area.scrollHeight;
+
         const mimeType = blob.type || 'audio/webm';
         const ext = mimeType.includes('mp4') ? 'mp4' : mimeType.includes('wav') ? 'wav' : 'webm';
         const form = new FormData();
@@ -894,9 +1076,21 @@
             body: form,
           });
           const json = await res.json();
-          if (!res.ok) toast(json.message || 'Voice upload failed', 'error');
+          if (!res.ok) {
+            toast(json.message || 'Voice upload failed', 'error');
+            placeholder.remove(); // remove placeholder on failure
+          } else {
+            // Remove optimistic placeholder — the real message will arrive via new_message
+            placeholder.remove();
+          }
         } catch (_) {
           toast('Voice upload failed', 'error');
+          placeholder.remove();
+        } finally {
+          voiceUploading = false;
+          btn.disabled = false;
+          btn.textContent = '🎤';
+          btn.title = 'Record voice message';
         }
       }
 
@@ -1070,6 +1264,7 @@
       // ── Room detail ───────────────────────────────────────────────────────────
       async function openRoom(roomSummary) {
         activeRoom = roomSummary;
+        showMobileChat();
 
         // Highlight in sidebar + clear badge immediately
         document.querySelectorAll('.room-row').forEach((el) => {
@@ -1096,6 +1291,8 @@
         // (full detail + members will replace this after HTTP resolves)
         document.getElementById('main-placeholder').style.display = 'none';
         document.getElementById('room-detail').style.display = 'flex';
+        // Collapse settings panel on each room open (clean state on mobile)
+        document.getElementById('room-actions').classList.remove('expanded');
 
         // Build room from sidebar data — no need to refetch GET /rooms/:id
         const room = { ...roomSummary };
@@ -1388,11 +1585,11 @@
 
         socket.on('connect', () => {
           toast('Connected', 'success');
-          // Re-subscribe to all known rooms so we receive events while not actively in them
+          // Re-subscribe to all known rooms so we receive events while not actively in them.
+          // Always emit even with an empty list so the server registers our socket ID —
+          // this is required to receive DM room_pushed and invite events immediately.
           const roomIds = [...lastSeenId.keys()];
-          if (roomIds.length > 0) {
-            socket.emit('subscribe_rooms', { roomIds });
-          }
+          socket.emit('subscribe_rooms', { roomIds });
           // Rejoin active room to get any messages we missed while disconnected
           if (activeRoom) {
             joinSocketRoom(activeRoom.id);
@@ -1506,7 +1703,9 @@
           const el = document.querySelector(`[data-msg-id="${messageId}"]`);
           if (el) {
             const contentEl = el.querySelector('.msg-content');
-            if (contentEl) contentEl.textContent = transcript;
+            if (contentEl) contentEl.innerHTML = renderContent(transcript);
+            // Remove loading indicator now that we have real content
+            el.querySelector('.voice-loading')?.remove();
             if (audioUrl && !el.querySelector('.msg-audio')) {
               const audio = document.createElement('audio');
               audio.controls = true;
@@ -1539,7 +1738,11 @@
             area.appendChild(bubble);
           }
           const contentEl = bubble.querySelector('.msg-content');
-          if (contentEl) contentEl.textContent += t;
+          if (contentEl) {
+            // Accumulate raw text on the element, then re-render with mention highlighting
+            contentEl._raw = (contentEl._raw || '') + t;
+            contentEl.innerHTML = renderContent(contentEl._raw);
+          }
           const area = document.getElementById('chat-area');
           area.scrollTop = area.scrollHeight;
         });
@@ -1584,12 +1787,13 @@
           const div = document.createElement('div');
           div.className = 'room-row';
           div.dataset.id = room.id;
-          renderRoomRow(div, room.name || 'DM', room.id);
+          const displayName = room.dmPartner?.name || room.name || 'DM';
+          renderRoomRow(div, displayName, room.id);
           div.addEventListener('click', () => openRoom({ ...room, role: 'MEMBER' }));
           scroll.appendChild(div);
           // subscribe to events in this room immediately
           socket.emit('subscribe_rooms', { roomIds: [room.id] });
-          toast(`You were added to "${room.name || 'a room'}"`, 'success');
+          toast(`${displayName} started a DM with you`, 'success');
         });
       }
 
@@ -1766,7 +1970,7 @@
 
         const contentEl = document.createElement('span');
         contentEl.className = 'msg-content';
-        contentEl.textContent = msg.content || '';
+        contentEl.innerHTML = renderContent(msg.content || '');
         bubble.appendChild(contentEl);
 
         // Audio player for VOICE messages
@@ -1776,6 +1980,12 @@
           audio.src = msg.audioUrl;
           audio.className = 'msg-audio';
           bubble.appendChild(audio);
+        } else if (isVoice) {
+          const indicator = document.createElement('div');
+          indicator.className = 'voice-loading';
+          indicator.style.cssText = 'font-size:11px;color:#666;margin-top:4px;font-style:italic';
+          indicator.textContent = '⏳ audio processing...';
+          bubble.appendChild(indicator);
         }
         // Audio player for AI messages with TTS
         if (isAi && msg.audioUrl) {
@@ -1909,6 +2119,18 @@
           .replace(/</g, '&lt;')
           .replace(/>/g, '&gt;')
           .replace(/"/g, '&quot;');
+      }
+
+      // Renders message text with @mention highlighting.
+      // @currentUser.name gets a brighter self-highlight; all other @words get the base style.
+      function renderContent(text) {
+        return esc(text).replace(/@(\S+)/g, (_, word) => {
+          const isSelf =
+            currentUser?.name &&
+            word.replace(/[,.:!?]+$/, '').toLowerCase() ===
+              currentUser.name.toLowerCase();
+          return `<span class="mention${isSelf ? ' mention-self' : ''}">@${word}</span>`;
+        });
       }
 
       function trunc(s, n) {

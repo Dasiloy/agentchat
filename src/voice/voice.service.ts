@@ -39,6 +39,7 @@ export class VoiceService {
     file: Express.Multer.File,
     roomId: string,
     userId: string,
+    userName: string,
   ): Promise<{ messageId: string; status: string }> {
     let audioUrl: string;
     try {
@@ -74,6 +75,7 @@ export class VoiceService {
       mimeType: file.mimetype,
       roomId,
       userId,
+      userName,
     });
 
     return { messageId: message.id, status: 'transcribing' };

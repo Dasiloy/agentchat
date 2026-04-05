@@ -80,9 +80,9 @@ export class VoiceController {
     )
     file: Express.Multer.File,
     @Body('roomId') roomId: string,
-    @CurrentUser() user: { id: string },
+    @CurrentUser() user: { id: string; name: string },
   ): Promise<StandardResponse<{ messageId: string; status: string }>> {
-    const data = await this.voiceService.uploadVoice(file, roomId, user.id);
+    const data = await this.voiceService.uploadVoice(file, roomId, user.id, user.name);
     return {
       success: true,
       message: 'Voice message uploaded',

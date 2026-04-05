@@ -56,11 +56,18 @@ export class AiProcessor extends WorkerHost {
    * 4. Queue TTS + kick off summary update as fire-and-forget.
    */
   private async handleAiResponse(job: Job<AiJobData>): Promise<void> {
-    const { roomId, userId, question, tts } = job.data;
+    const { roomId, userId, question, tts, userName } = job.data;
 
-    const context = await this.contextService.buildContext(roomId, question);
+    const context = await this.contextService.buildContext(roomId, question, userName);
     const tempMessageId = randomUUID();
-    let fullResponse = '';
+
+    // Always open the response with the addressee so the room knows who the AI
+    // is talking to — regardless of whether the model decides to include it.
+    const prefix = userName ? `@${userName}, ` : '';
+    let fullResponse = prefix;
+    if (prefix) {
+      this.gateway.emitToRoom(roomId, 'ai_token', { token: prefix, tempMessageId });
+    }
 
     // Stream with a 30s timeout — any error (including timeout) is re-thrown
     // so BullMQ can retry based on job.opts.attempts
