@@ -9,7 +9,7 @@
     "build": "nest build",
     "postinstall": "node -e \"['prisma.config.js','prisma.config.js.map','prisma.config.d.ts'].forEach(f=>{try{require('fs').unlinkSync(f)}catch(_){}})\" && prisma generate",
     "format": "prettier --write \"src/**/*.ts\" \"test/**/*.ts\"",
-    "start": "nest start",
+    "start": "node dist/main",
     "start:dev": "nest start --watch",
     "start:debug": "nest start --debug --watch",
     "start:prod": "node dist/main",
