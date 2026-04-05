@@ -42,6 +42,7 @@ export class OpenAiModelRepository extends AiModelRepository {
     const completion = await this.openai.chat.completions.create({
       model: opts?.model ?? 'gpt-4o',
       messages: messages.map((m) => ({ role: m.role, content: m.content })),
+      temperature: opts?.temperature ?? 0.85,
       stream: true,
     });
 
@@ -59,6 +60,10 @@ export class OpenAiModelRepository extends AiModelRepository {
     const result = await this.openai.audio.transcriptions.create({
       file,
       model: 'whisper-1',
+      language: 'en',
+      // Prompt biases Whisper to recognise "Siri" as the AI trigger word
+      // rather than transcribing it as "sorry", "Syria", or similar homophones.
+      prompt: 'This is a team chat message. The word "Siri" may appear as an AI assistant trigger.',
     });
     return result.text;
   }

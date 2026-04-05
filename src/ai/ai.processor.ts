@@ -58,16 +58,13 @@ export class AiProcessor extends WorkerHost {
   private async handleAiResponse(job: Job<AiJobData>): Promise<void> {
     const { roomId, userId, question, tts, userName } = job.data;
 
-    const context = await this.contextService.buildContext(roomId, question, userName);
+    const context = await this.contextService.buildContext(
+      roomId,
+      question,
+      userName,
+    );
     const tempMessageId = randomUUID();
-
-    // Always open the response with the addressee so the room knows who the AI
-    // is talking to — regardless of whether the model decides to include it.
-    const prefix = userName ? `@${userName}, ` : '';
-    let fullResponse = prefix;
-    if (prefix) {
-      this.gateway.emitToRoom(roomId, 'ai_token', { token: prefix, tempMessageId });
-    }
+    let fullResponse = '';
 
     // Stream with a 30s timeout — any error (including timeout) is re-thrown
     // so BullMQ can retry based on job.opts.attempts
@@ -115,13 +112,15 @@ export class AiProcessor extends WorkerHost {
       },
     });
 
-    // Notify room the stream is done so clients can swap the temp bubble
+    // Notify room the stream is done — send final content so clients can correct
+    // any duplicate prefix that may have streamed before dedup ran.
     this.gateway.emitToRoom(roomId, 'ai_response_complete', {
       messageId: saved.id,
       tempMessageId,
+      content: fullResponse,
     });
 
-    // Queue TTS only when the trigger was a voice message — text @ai mentions skip it
+    // Queue TTS only when the trigger was a voice message — text "siri" mentions skip it
     if (tts) {
       this.voiceQueue
         .add(VOICE_TTS, { messageId: saved.id, text: fullResponse, roomId })
@@ -143,7 +142,7 @@ export class AiProcessor extends WorkerHost {
     // Broadcast a user-friendly error — never expose raw error details to the room
     this.gateway.emitToRoom(job.data.roomId, 'ephemeral', {
       type: 'ai_error',
-      message: 'AI Assistant is temporarily unavailable. Please try again.',
+      message: 'Siri is temporarily unavailable. Please try again.',
     });
   }
 }

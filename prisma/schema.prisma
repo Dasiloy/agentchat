@@ -49,6 +49,7 @@ model User {
   memberships RoomMember[]
   messages    Message[]
   receipts    MessageReceipt[]
+  sessions    Session[]
 }
 
 model Account {
@@ -127,4 +128,16 @@ model MessageReceipt {
 
 @@unique([messageId, userId])
 @@index([userId, readAt])
+}
+
+model Session {
+  id                String   @id @default(cuid())
+  userId            String
+  refreshTokenHash  String   @unique // SHA-256 hex of the raw refresh JWT
+  expiresAt         DateTime
+  createdAt         DateTime @default(now())
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@index([userId])
 }

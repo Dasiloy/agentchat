@@ -237,8 +237,8 @@ export class ChatGateway
     // Broadcast to room EXCLUDING sender — sender adds optimistically on FE
     client.to(roomId).emit('new_message', message);
 
-    // @ai detection — queue AI response job
-    if (/(?:@ai|at\s+a\.?i\.?|hey\s+ai)\b/i.test(trimmed)) {
+    // Siri trigger detection — queue AI response job
+    if (/\bsiri\b/i.test(trimmed)) {
       await this.aiService.queueAiResponse({
         roomId,
         messageId: message.id,

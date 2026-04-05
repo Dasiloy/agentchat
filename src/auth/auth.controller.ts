@@ -203,6 +203,41 @@ export class AuthController {
   }
 
   // ================================================================
+  //. Refresh tokens — POST /auth/refresh
+  // ================================================================
+  @Post('refresh')
+  @Public()
+  @HttpCode(HttpStatus.OK)
+  @ApiOperation({ summary: 'Exchange a refresh token for a new token pair' })
+  @ApiBody({
+    schema: { example: { refreshToken: '<refresh-jwt>' } },
+  })
+  @ApiResponse({
+    status: 200,
+    description: 'Returns a new accessToken and refreshToken',
+    schema: {
+      example: {
+        success: true,
+        statusCode: 200,
+        message: 'Tokens refreshed',
+        data: { accessToken: '...', refreshToken: '...' },
+      },
+    },
+  })
+  @ApiResponse({ status: 401, description: 'Invalid or expired refresh token' })
+  async refresh(
+    @Body('refreshToken') refreshToken: string,
+  ): Promise<StandardResponse<AuthResponse>> {
+    const data = await this.authService.refresh(refreshToken);
+    return {
+      success: true,
+      message: 'Tokens refreshed',
+      data,
+      statusCode: HttpStatus.OK,
+    };
+  }
+
+  // ================================================================
   //.  Logout
   // ================================================================
   @Post('logout')

@@ -8,16 +8,28 @@ import { REDIS_CLIENT } from '../common/redis/redis.provider';
 import { PrismaService } from '../common/prisma/prisma.service';
 import { AuthService } from './auth.service';
 
+// Decoded JWT payload with exp 7 days from now
+const MOCK_DECODED = { sub: 'u1', email: 'a@b.com', type: 'refresh', exp: Math.floor(Date.now() / 1000) + 604800 };
+
 const mockPrisma = {
   user: {
     findUnique: jest.fn(),
     create: jest.fn(),
   },
+  session: {
+    create: jest.fn().mockResolvedValue({}),
+    delete: jest.fn().mockResolvedValue({}),
+    deleteMany: jest.fn().mockResolvedValue({}),
+    findUnique: jest.fn(),
+  },
 };
 
-const mockJwt = { sign: jest.fn().mockReturnValue('signed-token') };
+const mockJwt = {
+  sign: jest.fn().mockReturnValue('signed-token'),
+  decode: jest.fn().mockReturnValue(MOCK_DECODED),
+};
 const mockConfig = { getOrThrow: jest.fn().mockReturnValue('test-value') };
-const mockRedis = { set: jest.fn().mockResolvedValue('OK') };
+const mockRedis = { set: jest.fn().mockResolvedValue('OK'), del: jest.fn().mockResolvedValue(1) };
 
 describe('AuthService', () => {
   let service: AuthService;
@@ -36,6 +48,8 @@ describe('AuthService', () => {
     service = module.get<AuthService>(AuthService);
     jest.clearAllMocks();
     mockJwt.sign.mockReturnValue('signed-token');
+    mockJwt.decode.mockReturnValue(MOCK_DECODED);
+    mockPrisma.session.create.mockResolvedValue({});
   });
 
   describe('register', () => {
@@ -82,7 +96,7 @@ describe('AuthService', () => {
           password: 'password123',
           name: 'Alice',
         }),
-      ).rejects.toThrow('This email is linked to a Socail  account.');
+      ).rejects.toThrow('This email is linked to a Social account.');
     });
   });
 
@@ -100,6 +114,7 @@ describe('AuthService', () => {
         password: 'password123',
       });
       expect(result.accessToken).toBe('signed-token');
+      expect(result.refreshToken).toBe('signed-token');
     });
 
     it('should throw UnauthorizedException on wrong password', async () => {

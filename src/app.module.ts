@@ -38,6 +38,7 @@ import { VoiceModule } from './voice/voice.module';
         AES_KEY: Joi.string().required(),
         JWT_SECRET: Joi.string().required(),
         JWT_SECRET_EXPIRATION: Joi.string().required(),
+        JWT_REFRESH_TOKEN_EXPIRATION: Joi.string().required(),
         OPENAI_API_KEY: Joi.string().required(),
         DATABASE_URL: Joi.string().required(),
         NEXT_PUBLIC_APP_URL: Joi.string().required(),

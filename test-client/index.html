@@ -909,6 +909,7 @@
       const API = '/api';
 
       let token = null;
+      let refreshToken = null;
       let currentUser = null;
       let activeTab = 'login';
       let activeRoom = null; // { id, name, type, memberCount, role, ... }
@@ -956,6 +957,7 @@
           history.replaceState({}, '', '/');
         } else {
           token = localStorage.getItem('__dev_token');
+          refreshToken = localStorage.getItem('__dev_refresh_token');
         }
         if (token) fetchMe();
       })();
@@ -1131,7 +1133,9 @@
           if (!res.ok)
             return showStatus(json.message || 'Request failed', 'err');
           token = json.data.accessToken;
+          refreshToken = json.data.refreshToken;
           localStorage.setItem('__dev_token', token);
+          localStorage.setItem('__dev_refresh_token', refreshToken);
           await fetchMe();
         } catch {
           showStatus('Network error', 'err');
@@ -1150,6 +1154,12 @@
           const res = await fetch(`${API}/auth/me`, {
             headers: { Authorization: `Bearer ${token}` },
           });
+          if (res.status === 401) {
+            // Access token expired — try to refresh silently
+            const refreshed = await tryRefresh();
+            if (!refreshed) return;
+            return fetchMe();
+          }
           if (!res.ok) {
             token = null;
             localStorage.removeItem('__dev_token');
@@ -1161,6 +1171,35 @@
           loadRooms();
         } catch {
           token = null;
+        }
+      }
+
+      // Attempts to get a new token pair using the stored refresh token.
+      // Returns true on success, false if the session is fully expired.
+      async function tryRefresh() {
+        if (!refreshToken) return false;
+        try {
+          const res = await fetch(`${API}/auth/refresh`, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ refreshToken }),
+          });
+          if (!res.ok) {
+            token = null; refreshToken = null;
+            localStorage.removeItem('__dev_token');
+            localStorage.removeItem('__dev_refresh_token');
+            showLoggedOut();
+            toast('Session expired — please sign in again', 'error');
+            return false;
+          }
+          const json = await res.json();
+          token = json.data.accessToken;
+          refreshToken = json.data.refreshToken;
+          localStorage.setItem('__dev_token', token);
+          localStorage.setItem('__dev_refresh_token', refreshToken);
+          return true;
+        } catch {
+          return false;
         }
       }
 
@@ -1178,8 +1217,10 @@
           btn.disabled = false;
         }
         token = null;
+        refreshToken = null;
         currentUser = null;
         localStorage.removeItem('__dev_token');
+        localStorage.removeItem('__dev_refresh_token');
         showLoggedOut();
         toast('Signed out', 'success');
       }
@@ -1366,6 +1407,7 @@
           const initial = (m.user.name || '?')[0].toUpperCase();
           const chip = document.createElement('div');
           chip.className = 'mem-chip' + (isSelf ? ' self' : '');
+          chip.dataset.uid = m.userId;
           chip.title = isSelf ? 'You' : `DM ${m.user.name}`;
           chip.innerHTML = `
             <div class="mem-avatar${isOwner ? ' owner' : ''}">${esc(initial)}</div>
@@ -1435,7 +1477,6 @@
           status.textContent = 'Invited!';
           status.style.color = '#4ade80';
           document.getElementById('invite-email').value = '';
-          loadRooms(); // refresh memberCount
         } catch {
           status.textContent = 'Network error';
           status.style.color = '#f87171';
@@ -1646,11 +1687,45 @@
         socket.on('user_joined', ({ userId, name, roomId }) => {
           if (activeRoom?.id !== roomId) return;
           appendSystemMsg(`${esc(name)} joined`);
+
+          // Add new member chip to members bar
+          const bar = document.getElementById('members-bar');
+          if (bar && !bar.querySelector(`[data-uid="${userId}"]`)) {
+            const isSelf = userId === currentUser?.id;
+            const initial = (name || '?')[0].toUpperCase();
+            const chip = document.createElement('div');
+            chip.className = 'mem-chip' + (isSelf ? ' self' : '');
+            chip.dataset.uid = userId;
+            chip.title = isSelf ? 'You' : `DM ${name}`;
+            chip.innerHTML = `
+              <div class="mem-avatar">${esc(initial)}</div>
+              <span class="mem-name">${esc(name)}</span>
+            `;
+            bar.appendChild(chip);
+          }
+
+          // Increment member count in header
+          const countEl = document.getElementById('rh-count');
+          if (countEl) countEl.textContent = parseInt(countEl.textContent || '0') + 1;
+          if (activeRoom) activeRoom.memberCount = (activeRoom.memberCount || 0) + 1;
         });
 
         socket.on('user_left', ({ userId, roomId }) => {
           if (activeRoom?.id !== roomId) return;
           appendSystemMsg(`A user left`);
+
+          // Remove member chip
+          const bar = document.getElementById('members-bar');
+          const chip = bar?.querySelector(`[data-uid="${userId}"]`);
+          if (chip) chip.remove();
+
+          // Decrement member count in header
+          const countEl = document.getElementById('rh-count');
+          if (countEl) {
+            const n = parseInt(countEl.textContent || '1') - 1;
+            countEl.textContent = Math.max(0, n);
+          }
+          if (activeRoom) activeRoom.memberCount = Math.max(0, (activeRoom.memberCount || 1) - 1);
         });
 
         socket.on('typing_update', ({ roomId, userId, name, isTyping }) => {
@@ -1725,11 +1800,26 @@
         // ── AI streaming ──────────────────────────────────────────────────────
         socket.on('ai_thinking', ({ triggeredBy }) => {
           if (!activeRoom) return;
-          appendSystemMsg(`🤖 AI is thinking… (triggered by ${esc(triggeredBy || 'voice')})`);
+          // Show a single pulsing Siri bubble — replaced by the real stream on first token
+          const area = document.getElementById('chat-area');
+          let thinking = document.getElementById('siri-thinking');
+          if (!thinking) {
+            thinking = buildAiTempBubble('siri-thinking');
+            thinking.id = 'siri-thinking';
+            const contentEl = thinking.querySelector('.msg-content');
+            if (contentEl) {
+              contentEl.style.cssText = 'opacity:0.5;font-style:italic';
+              contentEl.textContent = 'thinking…';
+            }
+            area.appendChild(thinking);
+            area.scrollTop = area.scrollHeight;
+          }
         });
 
         socket.on('ai_token', ({ token: t, tempMessageId }) => {
           if (!activeRoom) return;
+          // Remove the thinking placeholder on first token
+          document.getElementById('siri-thinking')?.remove();
           let bubble = tempBubbles.get(tempMessageId);
           if (!bubble) {
             bubble = buildAiTempBubble(tempMessageId);
@@ -1747,18 +1837,27 @@
           area.scrollTop = area.scrollHeight;
         });
 
-        socket.on('ai_response_complete', ({ messageId, tempMessageId }) => {
+        socket.on('ai_response_complete', ({ messageId, tempMessageId, content }) => {
+          document.getElementById('siri-thinking')?.remove();
           const bubble = tempBubbles.get(tempMessageId);
           if (bubble) {
             bubble.dataset.msgId = messageId;
             tempBubbles.delete(tempMessageId);
+            // Replace streamed content with server-deduped final content
+            if (content) {
+              const contentEl = bubble.querySelector('.msg-content');
+              if (contentEl) {
+                contentEl._raw = content;
+                contentEl.innerHTML = renderContent(content);
+              }
+            }
           }
           // Add to cache as an AI message so room switch keeps it
           if (activeRoom) {
             const cached = messagesCache.get(activeRoom.id) || [];
             if (!cached.find((m) => m.id === messageId)) {
-              const content = bubble?.querySelector('.msg-content')?.textContent || '';
-              cached.push({ id: messageId, roomId: activeRoom.id, userId: null, content, type: 'AI', createdAt: new Date().toISOString() });
+              const finalContent = content || bubble?.querySelector('.msg-content')?._raw || bubble?.querySelector('.msg-content')?.textContent || '';
+              cached.push({ id: messageId, roomId: activeRoom.id, userId: null, content: finalContent, type: 'AI', createdAt: new Date().toISOString() });
               messagesCache.set(activeRoom.id, cached);
             }
           }
@@ -1942,7 +2041,7 @@
         const isAi = msg.type === 'AI' || msg.userId === null;
         const isVoice = msg.type === 'VOICE';
         const isMine = !isAi && msg.userId === currentUser?.id;
-        const name = isAi ? '🤖 AI Assistant' : (msg.user?.name || 'Unknown');
+        const name = isAi ? '🎙️ Siri' : (msg.user?.name || 'Unknown');
         const time = new Date(msg.createdAt).toLocaleTimeString([], {
           hour: '2-digit',
           minute: '2-digit',
@@ -1959,7 +2058,7 @@
           : '';
 
         const badgeHtml = isAi
-          ? `<div class="msg-type-badge">AI Assistant</div>`
+          ? `<div class="msg-type-badge">🎙️ Siri</div>`
           : isVoice
           ? `<div class="msg-type-badge">🎤 Voice</div>`
           : '';
@@ -2015,7 +2114,7 @@
         const div = document.createElement('div');
         div.style.cssText = 'display:flex;flex-direction:column;align-items:flex-start;padding:3px 20px';
         div.dataset.tempId = tempMessageId;
-        div.innerHTML = `<div style="font-size:11px;color:#555;margin-bottom:2px">🤖 AI Assistant</div>`;
+        div.innerHTML = `<div style="font-size:11px;color:#555;margin-bottom:2px">🎙️ Siri</div>`;
         const bubble = document.createElement('div');
         bubble.className = 'msg-bubble';
         bubble.style.cssText = 'max-width:70%;background:#1a2a1a;border-radius:10px;padding:8px 12px;font-size:14px;line-height:1.4';

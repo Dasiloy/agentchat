@@ -2,7 +2,13 @@ import { InjectQueue, Processor, WorkerHost } from '@nestjs/bullmq';
 import { Inject, Logger, forwardRef } from '@nestjs/common';
 import { Job, Queue } from 'bullmq';
 
-import { AI_QUEUE, AI_RESPONSE, VOICE_QUEUE, VOICE_TRANSCRIBE, VOICE_TTS } from '../@types/constants/queue';
+import {
+  AI_QUEUE,
+  AI_RESPONSE,
+  VOICE_QUEUE,
+  VOICE_TRANSCRIBE,
+  VOICE_TTS,
+} from '../@types/constants/queue';
 import { ChatGateway } from '../gateway/chat.gateway';
 import { VoiceService } from './voice.service';
 
@@ -12,7 +18,8 @@ export class VoiceProcessor extends WorkerHost {
 
   constructor(
     private readonly voiceService: VoiceService,
-    @Inject(forwardRef(() => ChatGateway)) private readonly gateway: ChatGateway,
+    @Inject(forwardRef(() => ChatGateway))
+    private readonly gateway: ChatGateway,
     @InjectQueue(AI_QUEUE) private readonly aiQueue: Queue,
   ) {
     super();
@@ -30,7 +37,8 @@ export class VoiceProcessor extends WorkerHost {
   }
 
   private async handleTranscribe(job: Job): Promise<void> {
-    const { messageId, audioUrl, mimeType, roomId, userId, userName } = job.data;
+    const { messageId, audioUrl, mimeType, roomId, userId, userName } =
+      job.data;
 
     const transcript = await this.voiceService.transcribeVoice(
       messageId,
@@ -39,17 +47,26 @@ export class VoiceProcessor extends WorkerHost {
       roomId,
     );
 
-    // If the voice message is directed at AI, queue a response with TTS enabled.
-    // Voice in → audio out: tts is always true for voice-triggered AI.
-    // Whisper transcribes spoken "@ai" in several ways depending on accent/speed:
-    //   "@ai", "at ai", "at a.i.", "hey ai", "@AI", "At AI", etc.
-    // Match all of them, case-insensitively, as the first word(s) of the transcript.
-    const AI_TRIGGER = /(?:@ai|at\s+a\.?i\.?|hey\s+ai)\b/i;
-    if (AI_TRIGGER.test(transcript.trim())) {
+    // If the voice message mentions "Siri", queue an AI response with TTS.
+    // Normalise smart quotes and strip diacritics Whisper occasionally adds
+    // before testing, so "Siri." / "Siri," / ""Siri"" all match reliably.
+    const AI_TRIGGER = /\bsiri\b/i;
+    const normalised = transcript
+      .replace(/[\u2018\u2019\u201c\u201d]/g, '')
+      .trim();
+    this.logger.log('TTS', AI_TRIGGER.test(normalised));
+    if (AI_TRIGGER.test(normalised)) {
       this.gateway.emitToRoom(roomId, 'ai_thinking', { triggeredBy: 'Voice' });
       await this.aiQueue.add(
         AI_RESPONSE,
-        { roomId, messageId, userId, userName, question: transcript, tts: true },
+        {
+          roomId,
+          messageId,
+          userId,
+          userName,
+          question: transcript,
+          tts: true,
+        },
         { attempts: 2, backoff: { type: 'fixed', delay: 3000 } },
       );
     }

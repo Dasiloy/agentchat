@@ -43,28 +43,29 @@ A real-time team workspace backend with an on-demand AI assistant. Built with Ne
    │  users        │  │  presence   │  │  gpt-4o     │
    │  rooms        │  │  typing     │  │  whisper-1  │
    │  messages     │  │  ai-queue   │  │  tts-1      │
-   │  receipts     │  │  sessions   │  └─────────────┘
-   └───────────────┘  └─────────────┘
+   │  receipts     │  │  rate-limit │  └─────────────┘
+   │  sessions     │  └─────────────┘
+   └───────────────┘
 ```
 
 ---
 
 ## Technology Choices
 
-| Concern       | Choice                        | Why                                                                         |
-| ------------- | ----------------------------- | --------------------------------------------------------------------------- |
-| Framework     | NestJS + TypeScript           | Module system, DI, guards, gateways all used deliberately                   |
-| Real-time     | Socket.io + Redis Adapter     | Named rooms, auto-reconnect, multi-instance pub/sub built in                |
-| Database      | PostgreSQL + Prisma           | Relational model fits chat data. Typed ORM. Cursor pagination.              |
-| Cache         | Redis (ioredis)               | Ephemeral state (typing, presence) never touches PostgreSQL                 |
-| Queue         | BullMQ                        | AI job sequencing, retry with backoff, dead-letter queue                    |
-| Auth          | JWT + Passport + Google OAuth | Stateless, 24h expiry, one social provider                                  |
-| AI            | OpenAI gpt-4o streaming       | Token streaming via Socket.io to whole room in real time                    |
-| STT           | OpenAI Whisper                | Same API key, non-blocking transcription via BullMQ queue                   |
-| TTS           | OpenAI TTS-1                  | Same API key, runs after text response completes, voice-in → audio-out only |
-| Audio Storage | Cloudinary                    | Buffer streaming, CDN delivery, survives redeployment                       |
-| API Docs      | Swagger                       | Auto-generated from decorators at `/docs`                                   |
-| Deployment    | Render                        | GitHub push → auto-deploy, managed PostgreSQL + Redis via blueprint         |
+| Concern       | Choice                        | Why                                                                           |
+| ------------- | ----------------------------- | ----------------------------------------------------------------------------- |
+| Framework     | NestJS + TypeScript           | Module system, DI, guards, gateways all used deliberately                     |
+| Real-time     | Socket.io + Redis Adapter     | Named rooms, auto-reconnect, multi-instance pub/sub built in                  |
+| Database      | PostgreSQL + Prisma           | Relational model fits chat data. Typed ORM. Cursor pagination.                |
+| Cache         | Redis (ioredis)               | Ephemeral state (typing, presence) never touches PostgreSQL                   |
+| Queue         | BullMQ                        | AI job sequencing, retry with backoff, dead-letter queue                      |
+| Auth          | JWT + Passport + Google OAuth | Access token (1d) + refresh token (7d), session table, token-type enforcement |
+| AI            | OpenAI gpt-4o streaming       | Token streaming via Socket.io to whole room in real time                      |
+| STT           | OpenAI Whisper                | Same API key, non-blocking transcription via BullMQ queue                     |
+| TTS           | OpenAI TTS-1                  | Same API key, runs after text response completes, voice-in → audio-out only   |
+| Audio Storage | Cloudinary                    | Buffer streaming, CDN delivery, survives redeployment                         |
+| API Docs      | Swagger                       | Auto-generated from decorators at `/docs`                                     |
+| Deployment    | Render                        | GitHub push → auto-deploy, managed PostgreSQL + Redis via blueprint           |
 
 ---
 
@@ -90,7 +91,7 @@ The server exposes three namespaces:
 
 ## REST API Reference
 
-Full interactive documentation at `/docs`. All endpoints except `register`, `login`, `google`, and `health` require `Authorization: Bearer <token>`.
+Full interactive documentation at `/docs`. All endpoints except `register`, `login`, `refresh`, `google`, and `health` require `Authorization: Bearer <accessToken>`.
 
 Per-module endpoint documentation (request shapes, response examples, error codes) lives alongside each controller:
 
@@ -135,7 +136,7 @@ const socket = io('https://agentchat-pcjs.onrender.com', {
 | Event               | Payload                      | Description                                                                                              |
 | ------------------- | ---------------------------- | -------------------------------------------------------------------------------------------------------- |
 | `join_room`         | `{ roomId, lastMessageId? }` | Join a room. Receives `room_snapshot`. `lastMessageId` skips full fetch if client is already up to date. |
-| `send_message`      | `{ roomId, content }`        | Send a text message. Prefix with `@ai` to invoke the AI assistant.                                       |
+| `send_message`      | `{ roomId, content }`        | Send a text message. Include the word `siri` anywhere to invoke Siri.                                    |
 | `typing_start`      | `{ roomId }`                 | User started typing. Auto-expires after 5 s.                                                             |
 | `typing_stop`       | `{ roomId }`                 | User stopped typing.                                                                                     |
 | `message_delivered` | `{ messageId }`              | Mark a message as delivered (seen in viewport).                                                          |
@@ -145,21 +146,21 @@ const socket = io('https://agentchat-pcjs.onrender.com', {
 
 ### Events the server emits (server → client)
 
-| Event                  | Payload                                                                | Description                                                     |
-| ---------------------- | ---------------------------------------------------------------------- | --------------------------------------------------------------- |
-| `room_snapshot`        | `{ roomId, messages, members, presence, unreadCount }`                 | Full state when joining a room                                  |
-| `new_message`          | Full message object with user                                          | A new message was sent to the room                              |
-| `user_joined`          | `{ userId, name, roomId }`                                             | A user joined the room                                          |
-| `user_left`            | `{ userId, roomId }`                                                   | A user disconnected                                             |
-| `typing_update`        | `{ roomId, userId, name, isTyping }`                                   | Typing state changed for a user                                 |
-| `presence_update`      | `{ userId, status: 'online' \| 'offline' }`                            | User presence changed                                           |
-| `receipt_update`       | `{ messageId, deliveredCount }` or `{ roomId, readBy, upToMessageId }` | Delivery or read receipt update                                 |
-| `ai_thinking`          | `{ triggeredBy }`                                                      | AI is processing — show loading indicator                       |
-| `ai_token`             | `{ token, tempMessageId }`                                             | Single streamed token from AI response                          |
-| `ai_response_complete` | `{ messageId, tempMessageId }`                                         | AI response finished — replace temp bubble with `messageId`     |
-| `voice_transcribed`    | `{ messageId, transcript, audioUrl }`                                  | Voice message transcription finished                            |
-| `ai_audio_ready`       | `{ messageId, audioUrl }`                                              | TTS audio for an AI response is ready (voice-triggered AI only) |
-| `ephemeral`            | `{ type, message, ttl? }`                                              | Transient notification (error, rate limit). Do not persist.     |
+| Event                  | Payload                                                                | Description                                                             |
+| ---------------------- | ---------------------------------------------------------------------- | ----------------------------------------------------------------------- |
+| `room_snapshot`        | `{ roomId, messages, members, presence, unreadCount }`                 | Full state when joining a room                                          |
+| `new_message`          | Full message object with user                                          | A new message was sent to the room                                      |
+| `user_joined`          | `{ userId, name, roomId }`                                             | A user joined the room                                                  |
+| `user_left`            | `{ userId, roomId }`                                                   | A user disconnected                                                     |
+| `typing_update`        | `{ roomId, userId, name, isTyping }`                                   | Typing state changed for a user                                         |
+| `presence_update`      | `{ userId, status: 'online' \| 'offline' }`                            | User presence changed                                                   |
+| `receipt_update`       | `{ messageId, deliveredCount }` or `{ roomId, readBy, upToMessageId }` | Delivery or read receipt update                                         |
+| `ai_thinking`          | `{ triggeredBy }`                                                      | AI is processing — show loading indicator                               |
+| `ai_token`             | `{ token, tempMessageId }`                                             | Single streamed token from AI response                                  |
+| `ai_response_complete` | `{ messageId, tempMessageId, content }`                                | Siri response finished — replace temp bubble with final deduped content |
+| `voice_transcribed`    | `{ messageId, transcript, audioUrl }`                                  | Voice message transcription finished                                    |
+| `ai_audio_ready`       | `{ messageId, audioUrl }`                                              | TTS audio for an AI response is ready (voice-triggered AI only)         |
+| `ephemeral`            | `{ type, message, ttl? }`                                              | Transient notification (error, rate limit). Do not persist.             |
 
 ---
 
@@ -175,24 +176,76 @@ When a user joins a room mid-conversation, they receive a complete `room_snapsho
 
 ---
 
-## AI Integration
+## AI Integration (Siri)
 
-The AI is invoked by prefixing a message with `@ai`. It never processes messages that do not invoke it — it is a team member that joins when called, not a passive interceptor.
+Siri is invoked by including the word `siri` anywhere in a message or voice transcript — no prefix required. It never processes messages that do not mention it — it is a friendly team member that joins when called, not a passive interceptor.
 
-**What the AI receives as context:**
+---
 
-Strategy is compaction + sliding window (RAG can be added incrementally):
+### Structured Prompt Strategy
 
-- A system prompt naming the room and its participants
-- For conversations ≤ 50 messages: all messages verbatim, prefixed with speaker names
-- For conversations > 50 messages: a rolling summary of older messages + last 15 verbatim
-- AI messages from previous turns are included — the AI has awareness of its own prior responses
+Siri's personality and behaviour are enforced through a structured system prompt generated at runtime in `ContextService.buildContext()`. The prompt is not static — it is dynamically composed from live room data (room name, participant list, triggering user) before every AI call.
 
-**Concurrent @ai invocations** are handled by a BullMQ queue. Every question gets answered in order. Nothing is silently dropped. Rate limit: 5 `@ai` calls per user per minute.
+The prompt is structured into five explicit numbered rules so the model follows each constraint independently rather than blending them into a vague instruction:
 
-**Streaming:** Tokens are broadcast via `ai_token` events to every member of the room as they arrive from OpenAI. All participants see the AI response being written in real time.
+````
+You are an active, friendly member of this group chat, not a detached assistant.
+Room: {roomName}. Participants: {participantNames}.
 
-**Voice → AI bridge:** If a voice message transcript begins with `@ai`, the `VoiceProcessor` automatically queues an AI response job with `tts: true`. The AI streams its reply as normal, then the `AiProcessor` queues a TTS job — resulting in an audio response. Voice in → audio out.
+1. ADDRESS THE TRIGGERING USER DIRECTLY
+   - The user who triggered you is @john. Mention them naturally at the start:
+     "@john, you should...", "@john, Docker is great for that..."
+   [or, if no user is known:]
+   - No specific user triggered you. Infer the primary interlocutor from context.
+
+2. USE PRONOUNS LIKE A HUMAN TEAMMATE
+   - Second-person (you, your) for the person you're addressing.
+   - Third-person (he, she, they, it) for others, tools, and concepts.
+   - Mention the user's name once, then rely on "you".
+
+3. SOUND CONVERSATIONAL AND NATURAL
+   - Use contractions (you're, it's, don't, can't).
+   - Use softeners: "maybe", "you could", "I'd suggest", "have you tried".
+   - Avoid "As an AI", "I am an assistant", or formal language.
+
+4. BE CONCISE AND CONTEXT-AWARE
+   - Default to 1–4 sentences unless depth is clearly needed.
+   - Ask a short question rather than assume when clarification is needed.
+
+5. FORMAT CODE SNIPPETS PROPERLY
+   - Always fence code in triple backticks with a language identifier (```ts, ```bash, etc.).
+   - Keep snippets minimal and focused.
+
+Always prioritize clarity, warmth, and sounding like a real person in the group.
+````
+
+**Why this approach over a single paragraph prompt:**
+
+| Concern             | Decision                                                                                                                  |
+| ------------------- | ------------------------------------------------------------------------------------------------------------------------- |
+| Addressee injection | Injected dynamically — `@john` appears in rule 1 only when `askedBy` is known; falls back to context inference otherwise  |
+| Pronoun discipline  | Explicitly split second/third person to prevent the model from switching to third-person when giving advice to the caller |
+| Tone                | Named anti-patterns ("As an AI") are banned by name — models reliably suppress exact phrases they are told to avoid       |
+| Code formatting     | Explicit rule with language identifier requirement — prevents bare code blocks in chat                                    |
+| Conciseness         | Hard sentence limit (1–4) prevents essay-style responses in a real-time chat context                                      |
+
+---
+
+### Context Window Strategy
+
+Strategy: **compaction + sliding window** (RAG can be added incrementally):
+
+- The structured system prompt above (room + participants + addressee + rules)
+- For conversations ≤ 50 messages: all messages verbatim, each prefixed with the speaker's name
+- For conversations > 50 messages: a rolling GPT-generated summary of older messages + last 15 verbatim
+- Siri's own prior responses are included — it has awareness of its own conversation history
+- Token guard: if assembled context exceeds ~100k characters, oldest messages are trimmed first; system prompt and current question are always preserved
+
+**Concurrent invocations** are handled by a BullMQ queue. Every question gets answered in order. Nothing is silently dropped. Rate limit: 5 `siri` calls per user per minute.
+
+**Streaming:** Tokens are broadcast via `ai_token` events to every member of the room as they arrive from OpenAI. All participants see the response being written in real time.
+
+**Voice → Siri bridge:** If a voice message transcript contains the word `siri`, the `VoiceProcessor` automatically queues an AI response job with `tts: true`. Siri streams its reply as normal, then the `AiProcessor` queues a TTS job — resulting in an audio response. Voice in → audio out.
 
 ---
 
@@ -212,7 +265,7 @@ POST /api/voice/upload
                         ├─ Transcribe via Whisper
                         ├─ Update message.content
                         ├─ Broadcast voice_transcribed
-                        └─ If transcript starts with @ai:
+                        └─ If transcript contains "siri":
                                 ├─ Broadcast ai_thinking
                                 └─ Queue AI_RESPONSE job (tts: true)
                                           │
@@ -245,16 +298,16 @@ The system uses a three-tier approach to avoid flooding large rooms with receipt
 
 ## Ambiguity Resolutions
 
-| Question                   | Decision                                   | Why                                                  |
-| -------------------------- | ------------------------------------------ | ---------------------------------------------------- |
-| Public vs private rooms?   | Private by default, invite-only            | Professional workspace — security first              |
-| AI invocation mechanism?   | `@ai` prefix                               | Explicit, unambiguous, matches @mention metaphor     |
-| Multiple simultaneous @ai? | Sequential queue per room                  | Every question answered, nothing dropped             |
-| How much history for AI?   | Last 15 + rolling summary                  | Cost-effective, full conversation awareness          |
-| Room permissions?          | OWNER/MEMBER, invite by OWNER only         | Simple, extensible, secure                           |
-| Voice blocking?            | Non-blocking — placeholder then transcript | Conversation keeps flowing                           |
-| Access token vs refresh?   | Access token only, 24h expiry              | Simpler for evaluation; documented as known tradeoff |
-| Voice @ai response format? | Always TTS — voice in → audio out          | Consistent UX — if you speak, you get spoken back to |
+| Question                          | Decision                                                                                  | Why                                                             |
+| --------------------------------- | ----------------------------------------------------------------------------------------- | --------------------------------------------------------------- |
+| Public vs private rooms?          | Private by default, invite-only                                                           | Professional workspace — security first                         |
+| AI invocation mechanism?          | Word `siri` anywhere in message/transcript                                                | Whisper reliably transcribes "Siri"; works anywhere in sentence |
+| Multiple simultaneous siri calls? | Sequential queue per room                                                                 | Every question answered, nothing dropped                        |
+| How much history for AI?          | Last 15 + rolling summary                                                                 | Cost-effective, full conversation awareness                     |
+| Room permissions?                 | OWNER/MEMBER, invite by OWNER only                                                        | Simple, extensible, secure                                      |
+| Voice blocking?                   | Non-blocking — placeholder then transcript                                                | Conversation keeps flowing                                      |
+| Session management?               | Access token (1d) + refresh token (7d), DB session row per refresh token, rotation on use | Short-lived access + revocable refresh mitigates token theft    |
+| Voice siri response format?       | Always TTS — voice in → audio out                                                         | Consistent UX — if you speak, you get spoken back to            |
 
 ---
 
@@ -262,7 +315,9 @@ The system uses a three-tier approach to avoid flooding large rooms with receipt
 
 ### Auth
 
-**Access token only (no refresh):** Tokens are valid for 24 hours with no server-side revocation. A stolen token cannot be invalidated before expiry. Production fix: Redis blacklist + short-lived access tokens (15 min) with refresh rotation.
+**No server-side access token revocation:** Access tokens are valid for 24 hours with no blacklist. A stolen access token cannot be invalidated before expiry — only the refresh token session can be revoked. Production fix: Redis blacklist for access tokens on logout, with short-lived access tokens (15 min).
+
+**One session per login, no multi-device session list:** Each login creates one `Session` row. Users cannot see or revoke individual device sessions from a UI. Production fix: expose a `GET /auth/sessions` endpoint and allow targeted session revocation.
 
 ### Real-time
 
@@ -284,13 +339,13 @@ The system uses a three-tier approach to avoid flooding large rooms with receipt
 
 ### AI Rate Limiting
 
-**Per-user rate limit is in-memory per instance:** The Redis-backed rate limit (5 `@ai` calls/minute/user) is correct for multi-instance deployments. However, the `ai_thinking` broadcast and the job queuing happen after the rate check — a user who is rate-limited will see an ephemeral error, not a suppressed `ai_thinking` event (this ordering is intentional but worth noting).
+**Per-user rate limit is in-memory per instance:** The Redis-backed rate limit (5 `siri` calls/minute/user) is correct for multi-instance deployments. However, the `ai_thinking` broadcast and the job queuing happen after the rate check — a user who is rate-limited will see an ephemeral error, not a suppressed `ai_thinking` event (this ordering is intentional but worth noting).
 
 ### Voice
 
 **Transcription re-fetches from Cloudinary:** After upload, the audio buffer is not kept in memory. The `VoiceProcessor` job re-fetches the audio from its Cloudinary URL over HTTP before sending to Whisper. This adds one extra network round-trip (~100–500 ms) to transcription latency, and is susceptible to Cloudinary CDN propagation delay on fresh uploads.
 
-**TTS only for voice-triggered AI:** Text-based `@ai` questions never receive a TTS (audio) response, regardless of user preference. There is no opt-in flag for text users to request audio. This is intentional — TTS adds Cloudinary upload latency and cost, so it is reserved for the voice-in → audio-out flow only.
+**TTS only for voice-triggered Siri:** Text-based `siri` invocations never receive a TTS (audio) response, regardless of user preference. There is no opt-in flag for text users to request audio. This is intentional — TTS adds Cloudinary upload latency and cost, so it is reserved for the voice-in → audio-out flow only.
 
 **No audio expiry policy:** Voice messages and TTS audio are uploaded to Cloudinary indefinitely. There is no TTL or cleanup job. Over time, storage costs will grow proportionally to message volume.
 
@@ -325,15 +380,16 @@ The system uses a three-tier approach to avoid flooding large rooms with receipt
 1. **Message reactions** (2–6 hr) — reactions table, emoji picker, broadcast
 2. **Message history pagination** (3 hr) — REST endpoint with cursor, client scroll-up
 3. **Message search** (3 hr) — PostgreSQL full-text GIN index
-4. **Token refresh rotation** (3 hr) — short-lived access + refresh with Redis blacklist
-5. **Multi-tab presence** (2 hr) — Redis SET of socketIds per user
-6. **pgvector RAG** (8 hr) — embed messages, semantic retrieval for AI context instead of summary
-7. **Summary debounce** (1 hr) — only update summary every N new messages, not every AI call
-8. **File sharing + AI parsing** (4 hr) — Cloudinary upload, OpenAI vision/text
-9. **Cloudinary audio expiry** (1 hr) — auto-delete voice recordings after N days
-10. **Docker + Kubernetes** (4 hr) — containerisation, horizontal scaling manifests
-11. **Anthropic provider** (2 hr) — implement `AnthropicModelRepository` with the official SDK
-12. **Email invitations** (3–4 hr) — signed invitation tokens + email delivery for unregistered users
+4. **Access token blacklist** (2 hr) — Redis blacklist on logout for immediate revocation
+5. **Multi-device session management** (2 hr) — `GET /auth/sessions` + targeted revocation UI
+6. **Multi-tab presence** (2 hr) — Redis SET of socketIds per user
+7. **pgvector RAG** (8 hr) — embed messages, semantic retrieval for AI context instead of summary
+8. **Summary debounce** (1 hr) — only update summary every N new messages, not every AI call
+9. **File sharing + AI parsing** (4 hr) — Cloudinary upload, OpenAI vision/text
+10. **Cloudinary audio expiry** (1 hr) — auto-delete voice recordings after N days
+11. **Docker + Kubernetes** (4 hr) — containerisation, horizontal scaling manifests
+12. **Anthropic provider** (2 hr) — implement `AnthropicModelRepository` with the official SDK
+13. **Email invitations** (3–4 hr) — signed invitation tokens + email delivery for unregistered users
 
 ---
 
@@ -366,6 +422,7 @@ cp .env.example .env
 | `REDIS_URL`                       | `redis://localhost:6379`         | Redis connection URL (BullMQ + Socket.io adapter) |
 | `JWT_SECRET`                      | `some-very-long-random-string`   | Signing secret for JWTs                           |
 | `JWT_SECRET_EXPIRATION`           | `86400s`                         | Token lifetime (e.g. `86400s` = 24 h)             |
+| `JWT_REFRESH_TOKEN_EXPIRATION`    | `604800s`                        | Refresh token lifetime (7 days)                   |
 | `AES_KEY`                         | `32-char-hex-string`             | AES-256 key for any at-rest encryption            |
 | `AUTH_GOOGLE_ID`                  | `xxx.apps.googleusercontent.com` | Google OAuth client ID                            |
 | `AUTH_GOOGLE_SECRET`              | `GOCSPX-xxx`                     | Google OAuth client secret                        |
@@ -439,9 +496,9 @@ Email/password login (using the credentials above) works for everyone and has no
 - [ ] Alice starts typing → Bob sees "Alice is typing..."
 - [ ] Close Bob's tab → Alice sees Bob go offline
 - [ ] Reopen Bob's tab → Alice sees Bob come back online
-- [ ] Alice types `@ai what causes Docker networking issues after restart?` → AI streams response to both tabs
-- [ ] Both type `@ai` questions simultaneously → both answered in order
-- [ ] Alice sends a voice message starting with `@ai ...` → transcript appears, then AI responds in text and audio
+- [ ] Alice types `siri, what causes Docker networking issues after restart?` → Siri streams response to both tabs
+- [ ] Both mention `siri` simultaneously → both answered in order
+- [ ] Alice sends a voice message saying `siri, ...` → transcript appears, then Siri responds in text and audio
 - [ ] Close and reopen Alice's tab → full message history loads from the last seen message
 
 ---
@@ -450,7 +507,8 @@ Email/password login (using the credentials above) works for everyone and has no
 
 A GitHub Actions workflow runs on every push and pull request to `master`:
 
-1. **Test** — installs dependencies, runs `pnpm test`
+1. **Unit tests** — installs dependencies, runs `pnpm test` (14 suites, 65 tests)
+2. **E2E tests** — runs `pnpm test:e2e` against a focused NestJS test module (auth + health endpoints)
 
 See [.github/workflows/ci.yml](.github/workflows/ci.yml).
 
@@ -462,15 +520,3 @@ This project is **proprietary and unlicensed** — all rights reserved.
 No part of this source code may be reproduced, distributed, or used without the prior written permission of the author.
 
 Copyright &copy; 2026 [Dasiloy](https://github.com/dasiloy). See [LICENSE](LICENSE) for details.
-
-feat.
-
-1. add session mnangement and refresh token, keep access token for 1day and refresh token for 7days
-
-2. fine tiune ai response to be more human, let it behave like a member of the group
-
-Bugs
-
-1. On invite user the inviting user, the owner of the rrom , is not getting the updated team meber
-
-2. in some ai response @recipient (same appears multiplke times,) we need to prevent this

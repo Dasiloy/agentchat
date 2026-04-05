@@ -36,7 +36,13 @@ export class JwtStrategy extends PassportStrategy(Strategy) {
    * @returns The user object attached to request.user
    * @throws {UnauthorizedException} when user is not found
    */
-  async validate(payload: { sub: string; email: string }) {
+  async validate(payload: { sub: string; email: string; type?: string }) {
+    // Reject refresh tokens used as access tokens
+    //! CRUCIAL => a general cyber attack
+    if (payload.type !== 'access') {
+      throw new UnauthorizedException('Unauthorized');
+    }
+
     const cached = await this.redis.get(`user:${payload.sub}`);
     if (cached) {
       return JSON.parse(cached);

@@ -31,7 +31,7 @@ describe('JwtStrategy', () => {
     const user = { id: 'u1', email: 'a@b.com' };
     mockRedis.get.mockResolvedValue(JSON.stringify(user));
 
-    const result = await strategy.validate({ sub: 'u1', email: 'a@b.com' });
+    const result = await strategy.validate({ sub: 'u1', email: 'a@b.com', type: 'access' });
 
     expect(result).toEqual(user);
     expect(mockPrisma.user.findUnique).not.toHaveBeenCalled();
@@ -43,7 +43,7 @@ describe('JwtStrategy', () => {
     mockPrisma.user.findUnique.mockResolvedValue(user);
     mockRedis.set.mockResolvedValue('OK');
 
-    const result = await strategy.validate({ sub: 'u1', email: 'a@b.com' });
+    const result = await strategy.validate({ sub: 'u1', email: 'a@b.com', type: 'access' });
 
     expect(result).toEqual(user);
     expect(mockPrisma.user.findUnique).toHaveBeenCalledWith({ where: { id: 'u1' } });
@@ -55,7 +55,7 @@ describe('JwtStrategy', () => {
     mockPrisma.user.findUnique.mockResolvedValue(null);
 
     await expect(
-      strategy.validate({ sub: 'u1', email: 'a@b.com' }),
+      strategy.validate({ sub: 'u1', email: 'a@b.com', type: 'access' }),
     ).rejects.toThrow(UnauthorizedException);
   });
 });

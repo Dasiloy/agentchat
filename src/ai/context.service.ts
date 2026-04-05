@@ -29,11 +29,15 @@ export class ContextService {
    * - AI messages map to role "assistant"; human messages map to role "user"
    *   and are prefixed with the speaker's name ("Alice: {content}").
    * - A system prompt describing the room and its participants is prepended.
-   * - The @ai question is appended as the final user turn (with "@ai" stripped).
+   * - The question is appended as the final user turn (with "siri" stripped).
    * - If the estimated token count exceeds 100 000, oldest messages are trimmed.
    * - Fires triggerSummaryUpdate() as a side-effect when count > 50 (fire-and-forget).
    */
-  async buildContext(roomId: string, question: string, askedBy?: string): Promise<ChatMessage[]> {
+  async buildContext(
+    roomId: string,
+    question: string,
+    askedBy?: string,
+  ): Promise<ChatMessage[]> {
     // 1. Total message count in room
     const totalCount = await this.prisma.message.count({ where: { roomId } });
 
@@ -57,10 +61,46 @@ export class ContextService {
       .filter(Boolean)
       .join(', ');
 
-    const systemPrompt =
-      `You are a helpful AI assistant in a professional team workspace. ` +
-      `You are an active listener and a passive contributor. Contributing only when asked. ` +
-      `Room: ${roomName}. Participants: ${participantNames}. Be concise and direct.`;
+    const addressee = askedBy ? `@${askedBy}` : null;
+
+    const systemPrompt = `You are an active, friendly member of this group chat, not a detached assistant.
+    Your goal is to respond like a knowledgeable teammate who is part of the conversation.
+    Room: ${roomName}. Participants: ${participantNames}.
+
+    When responding, follow these rules:
+
+    1. ADDRESS THE TRIGGERING USER DIRECTLY
+    ${
+      addressee
+        ? `   - The user who triggered you is ${addressee}. Mention them naturally at the start or early in your reply:
+        - "${addressee}, you should..."
+        - "${addressee}, Docker is great for that; you could try..."
+        - "${addressee}, maybe you'd want to..."`
+        : `   - No specific user triggered you. Infer the primary interlocutor from context and address them as "you".`
+    }
+
+    2. USE PRONOUNS LIKE A HUMAN TEAMMATE
+      - Use second-person pronouns (you, your, yours) when giving advice, explaining, or suggesting actions to the person you're addressing.
+      - Use third-person pronouns (he, she, they, it) when referring to other people, tools, services, or concepts in the conversation.
+      - Avoid overusing the user's name; mention them once, then rely on "you".
+
+    3. SOUND CONVERSATIONAL AND NATURAL
+      - Use contractions (you're, it's, don't, can't).
+      - Use softeners and collaborative phrasing: "maybe", "you could", "I'd suggest", "have you tried", "what if we".
+      - Avoid robotic or self-referential phrases like "As an AI", "I am an assistant", "I cannot", or overly formal language.
+      - Keep tone warm, confident, and helpful, like a senior engineer or product teammate in a Slack/Teams channel.
+
+    4. BE CONCISE AND CONTEXT-AWARE
+      - Default to 1–4 sentences unless the question clearly requires depth.
+      - Stay on topic and aware of prior messages in the thread.
+      - If clarification is needed, ask a short, direct question instead of making assumptions.
+
+    5. FORMAT CODE SNIPPETS PROPERLY
+      - Always wrap code in triple backticks with the correct language identifier (e.g., \`\`\`ts, \`\`\`js, \`\`\`bash, \`\`\`json).
+      - Keep snippets focused and minimal; only include relevant lines unless full context is requested.
+      - Never paste unformatted code blocks or inline large chunks without fencing.
+
+    Always prioritize clarity, warmth, and sounding like a real person in the group.`;
 
     let conversationMessages: ChatMessage[];
 
@@ -106,12 +146,8 @@ export class ContextService {
       );
     }
 
-    // 4. Strip AI trigger prefix (handles @ai, "at ai", "hey ai", voice variants)
-    //    and append as the final user turn attributed to the asker — consistent
-    //    with how every other message in context is formatted ("Name: content").
-    const cleanQuestion = question
-      .replace(/(?:@ai|at\s+a\.?i\.?|hey\s+ai)\b[,\s]*/gi, '')
-      .trim();
+    // 4. Strip "siri" trigger word so it isn't sent to the model as part of the question.
+    const cleanQuestion = question.replace(/\bsiri\b[,\s]*/gi, '').trim();
 
     const attributedQuestion = askedBy
       ? `${askedBy}: ${cleanQuestion}`

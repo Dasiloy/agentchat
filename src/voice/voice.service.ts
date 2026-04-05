@@ -68,7 +68,7 @@ export class VoiceService {
     this.gateway.emitToRoom(roomId, 'new_message', message);
 
     // Fire-and-forget: transcription runs in VoiceProcessor
-    // userId is forwarded so the processor can queue an AI job if @ai is detected
+    // userId is forwarded so the processor can queue an AI job if "siri" is detected
     await this.voiceQueue.add(VOICE_TRANSCRIBE, {
       messageId: message.id,
       audioUrl,
@@ -123,7 +123,7 @@ export class VoiceService {
    * message. Called by VoiceProcessor.
    */
   /**
-   * Returns the transcript so VoiceProcessor can inspect it for @ai triggers.
+   * Returns the transcript so VoiceProcessor can inspect it for "siri" triggers.
    */
   async transcribeVoice(
     messageId: string,

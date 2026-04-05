@@ -101,7 +101,7 @@ describe('VoiceService', () => {
         createOrder.push('emit');
       });
 
-      await service.uploadVoice(file, 'room-1', 'user-1');
+      await service.uploadVoice(file, 'room-1', 'user-1', 'Alice');
 
       expect(createOrder).toEqual(['db', 'emit']);
     });
@@ -116,7 +116,7 @@ describe('VoiceService', () => {
         user: null,
       });
 
-      const result = await service.uploadVoice(file, 'room-1', 'user-1');
+      const result = await service.uploadVoice(file, 'room-1', 'user-1', 'Alice');
 
       // Returns upload result without waiting for transcription
       expect(result).toEqual({ messageId: 'msg-1', status: 'transcribing' });

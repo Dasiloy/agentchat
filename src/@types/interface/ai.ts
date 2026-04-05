@@ -34,6 +34,6 @@ export interface QueueAiResponseParams {
   server: Server;
   client: Socket;
   /** When true, VoiceProcessor synthesizes the response to audio after streaming.
-   *  Set only when the trigger was a voice message — text @ai mentions do not need TTS. */
+   *  Set only when the trigger was a voice message — text "siri" mentions do not need TTS. */
   tts?: boolean;
 }
