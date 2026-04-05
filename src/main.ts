@@ -94,7 +94,7 @@ async function bootstrap() {
   app.enableShutdownHooks();
 
   const port = parseInt(configService.get('PORT')!, 10);
-  app.listen(port, () => {
+  app.listen(port, '0.0.0.0', () => {
     logger.log(`Running on port ${port}`);
   });
 }
