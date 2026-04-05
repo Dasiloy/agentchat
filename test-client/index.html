@@ -423,6 +423,68 @@
         text-overflow: ellipsis;
       }
 
+      /* User search dropdown */
+      #user-search-results {
+        position: absolute;
+        background: #1e1e1e;
+        border: 1px solid #333;
+        border-radius: 6px;
+        width: 100%;
+        z-index: 50;
+        max-height: 160px;
+        overflow-y: auto;
+        display: none;
+      }
+      .search-result-item {
+        padding: 7px 10px;
+        font-size: 13px;
+        cursor: pointer;
+        display: flex;
+        flex-direction: column;
+        gap: 1px;
+      }
+      .search-result-item:hover { background: #2a2a2a; }
+      .search-result-item .sr-name { color: #e8e8e8; }
+      .search-result-item .sr-email { color: #555; font-size: 11px; }
+      #dm-search-wrap { position: relative; }
+
+      /* Mic button */
+      #mic-btn {
+        background: #2a2a2a;
+        color: #aaa;
+        padding: 10px 14px;
+        border-radius: 8px;
+        font-size: 18px;
+        flex-shrink: 0;
+        line-height: 1;
+      }
+      #mic-btn.recording {
+        background: #7f1d1d;
+        color: #fca5a5;
+        animation: pulse 1s infinite;
+      }
+      @keyframes pulse {
+        0%, 100% { opacity: 1; }
+        50% { opacity: 0.5; }
+      }
+
+      /* Audio player in bubbles */
+      .msg-audio {
+        margin-top: 6px;
+        width: 100%;
+        max-width: 260px;
+        height: 36px;
+        border-radius: 6px;
+        accent-color: #7c9ef8;
+      }
+
+      /* AI / Voice message label */
+      .msg-type-badge {
+        font-size: 10px;
+        color: #555;
+        margin-bottom: 2px;
+      }
+
       /* Toast */
       #toast {
         position: fixed;
@@ -545,6 +607,19 @@
         <!-- DM section -->
         <div class="sidebar-section" id="dm-panel" style="display: none">
           <h3>Direct Message</h3>
+          <!-- User search -->
+          <div id="dm-search-wrap" style="margin-bottom: 8px">
+            <input
+              type="text"
+              id="user-search-input"
+              placeholder="Search users…"
+              autocomplete="off"
+              oninput="onUserSearch(event)"
+              onfocus="onUserSearch(event)"
+              style="font-size: 13px"
+            />
+            <div id="user-search-results"></div>
+          </div>
           <div class="create-row">
             <input type="email" id="dm-email" placeholder="user@example.com" />
             <button
@@ -656,6 +731,7 @@
                 onkeydown="onChatKeyDown(event)"
                 oninput="onChatInput(event)"
               ></textarea>
+              <button id="mic-btn" onclick="toggleVoice()" title="Record voice message">🎤</button>
               <button
                 id="send-btn"
                 onclick="sendMessage()"
@@ -703,6 +779,15 @@
       const lastSeenId = new Map(); // roomId → id of newest message the client has
       const roomMeta = new Map(); // roomId → { preview, unreadCount } for sidebar updates
       const messagesCache = new Map(); // roomId → array of message objects (for instant room switch)
+      const tempBubbles = new Map(); // tempMessageId → DOM element (AI streaming)
+
+      // Voice recording state
+      let mediaRecorder = null;
+      let audioChunks = [];
+      let isRecording = false;
+
+      // User search debounce
+      let userSearchTimer = null;
 
       // ── Boot ──────────────────────────────────────────────────────────────────
       (function boot() {
@@ -718,6 +803,103 @@
       })();
 
       // ── Auth ──────────────────────────────────────────────────────────────────
+      // ── User search ───────────────────────────────────────────────────────────
+      function onUserSearch(e) {
+        const q = e.target.value.trim();
+        const dropdown = document.getElementById('user-search-results');
+        clearTimeout(userSearchTimer);
+        if (q.length < 3) { dropdown.style.display = 'none'; return; }
+        userSearchTimer = setTimeout(async () => {
+          try {
+            const res = await fetch(`${API}/users/search?q=${encodeURIComponent(q)}`, {
+              headers: { Authorization: `Bearer ${token}` },
+            });
+            const json = await res.json();
+            if (!json.success || !json.data.length) { dropdown.style.display = 'none'; return; }
+            dropdown.innerHTML = '';
+            json.data.forEach((u) => {
+              const item = document.createElement('div');
+              item.className = 'search-result-item';
+              item.innerHTML = `<span class="sr-name">${esc(u.name)}</span><span class="sr-email">${esc(u.email)}</span>`;
+              item.addEventListener('click', () => {
+                document.getElementById('dm-email').value = u.email;
+                document.getElementById('user-search-input').value = '';
+                dropdown.style.display = 'none';
+                openDm();
+              });
+              dropdown.appendChild(item);
+            });
+            dropdown.style.display = 'block';
+          } catch (_) { dropdown.style.display = 'none'; }
+        }, 300);
+      }
+
+      // Close search dropdown when clicking outside
+      document.addEventListener('click', (e) => {
+        if (!document.getElementById('dm-search-wrap')?.contains(e.target)) {
+          const d = document.getElementById('user-search-results');
+          if (d) d.style.display = 'none';
+        }
+      });
+
+      // ── Voice recording ───────────────────────────────────────────────────────
+      async function toggleVoice() {
+        if (isRecording) {
+          stopVoice();
+        } else {
+          await startVoice();
+        }
+      }
+
+      async function startVoice() {
+        if (!activeRoom) { toast('Open a room first', 'error'); return; }
+        try {
+          const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
+          audioChunks = [];
+          mediaRecorder = new MediaRecorder(stream);
+          mediaRecorder.ondataavailable = (e) => { if (e.data.size > 0) audioChunks.push(e.data); };
+          mediaRecorder.onstop = async () => {
+            stream.getTracks().forEach((t) => t.stop());
+            const blob = new Blob(audioChunks, { type: mediaRecorder.mimeType || 'audio/webm' });
+            await uploadVoice(blob);
+          };
+          mediaRecorder.start();
+          isRecording = true;
+          document.getElementById('mic-btn').classList.add('recording');
+          document.getElementById('mic-btn').title = 'Stop recording';
+        } catch (err) {
+          toast('Microphone access denied', 'error');
+        }
+      }
+
+      function stopVoice() {
+        if (mediaRecorder && mediaRecorder.state !== 'inactive') mediaRecorder.stop();
+        isRecording = false;
+        const btn = document.getElementById('mic-btn');
+        btn.classList.remove('recording');
+        btn.title = 'Record voice message';
+      }
+
+      async function uploadVoice(blob) {
+        if (!activeRoom) return;
+        const mimeType = blob.type || 'audio/webm';
+        const ext = mimeType.includes('mp4') ? 'mp4' : mimeType.includes('wav') ? 'wav' : 'webm';
+        const form = new FormData();
+        form.append('file', blob, `voice.${ext}`);
+        form.append('roomId', activeRoom.id);
+        try {
+          const res = await fetch(`${API}/voice/upload`, {
+            method: 'POST',
+            headers: { Authorization: `Bearer ${token}` },
+            body: form,
+          });
+          const json = await res.json();
+          if (!res.ok) toast(json.message || 'Voice upload failed', 'error');
+        } catch (_) {
+          toast('Voice upload failed', 'error');
+        }
+      }
+
       function switchTab(tab, btn) {
         activeTab = tab;
         document
@@ -1230,9 +1412,16 @@
               (a, b) => new Date(a.createdAt) - new Date(b.createdAt),
             );
             messagesCache.set(roomId, merged);
-            lastSeenId.set(roomId, messages[messages.length - 1].id);
+            const newestId = messages[messages.length - 1].id;
+            lastSeenId.set(roomId, newestId);
             // Only re-render if this is the currently active room
-            if (activeRoom?.id === roomId) renderMessages(merged);
+            if (activeRoom?.id === roomId) {
+              renderMessages(merged);
+              // Mark all as read since user is looking at them
+              if (socket?.connected) {
+                socket.emit('messages_read', { roomId, upToMessageId: newestId });
+              }
+            }
           }
           // messages === [] means client was up to date — cache already correct, don't wipe
         });
@@ -1251,6 +1440,10 @@
           updateRoomRowMeta(msg.roomId, preview, isActive ? 0 : 1);
           if (!isActive) return;
           appendMessages([msg]);
+          // Mark read immediately since this is the active room
+          if (socket?.connected) {
+            socket.emit('messages_read', { roomId: msg.roomId, upToMessageId: msg.id });
+          }
         });
 
         socket.on('user_joined', ({ userId, name, roomId }) => {
@@ -1292,6 +1485,92 @@
             activeRoom = null;
             closeRoomDetail();
             toast('You were removed from this room', 'error');
+          }
+        });
+
+        // ── Read receipts ─────────────────────────────────────────────────────
+        // receipt_update can carry either a deliveredCount (delivery) or readBy (read)
+        socket.on('receipt_update', ({ messageId, deliveredCount, readBy, upToMessageId }) => {
+          if (messageId && deliveredCount !== undefined) {
+            // Delivery receipt for a specific message
+            markMessageDelivered(messageId);
+          } else if (upToMessageId) {
+            // Read receipt: mark the message and all before it as read by someone
+            markMessageRead(upToMessageId);
+          }
+        });
+
+        // ── Voice transcription ───────────────────────────────────────────────
+        socket.on('voice_transcribed', ({ messageId, transcript, audioUrl }) => {
+          // Update the message bubble content and attach an audio player
+          const el = document.querySelector(`[data-msg-id="${messageId}"]`);
+          if (el) {
+            const contentEl = el.querySelector('.msg-content');
+            if (contentEl) contentEl.textContent = transcript;
+            if (audioUrl && !el.querySelector('.msg-audio')) {
+              const audio = document.createElement('audio');
+              audio.controls = true;
+              audio.src = audioUrl;
+              audio.className = 'msg-audio';
+              el.querySelector('.msg-bubble')?.appendChild(audio);
+            }
+          }
+          // Also update the message cache
+          if (activeRoom) {
+            const cached = messagesCache.get(activeRoom.id) || [];
+            const idx = cached.findIndex((m) => m.id === messageId);
+            if (idx !== -1) { cached[idx].content = transcript; cached[idx].audioUrl = audioUrl; }
+          }
+        });
+
+        // ── AI streaming ──────────────────────────────────────────────────────
+        socket.on('ai_thinking', ({ triggeredBy }) => {
+          if (!activeRoom) return;
+          appendSystemMsg(`🤖 AI is thinking… (triggered by ${esc(triggeredBy || 'voice')})`);
+        });
+
+        socket.on('ai_token', ({ token: t, tempMessageId }) => {
+          if (!activeRoom) return;
+          let bubble = tempBubbles.get(tempMessageId);
+          if (!bubble) {
+            bubble = buildAiTempBubble(tempMessageId);
+            tempBubbles.set(tempMessageId, bubble);
+            const area = document.getElementById('chat-area');
+            area.appendChild(bubble);
+          }
+          const contentEl = bubble.querySelector('.msg-content');
+          if (contentEl) contentEl.textContent += t;
+          const area = document.getElementById('chat-area');
+          area.scrollTop = area.scrollHeight;
+        });
+
+        socket.on('ai_response_complete', ({ messageId, tempMessageId }) => {
+          const bubble = tempBubbles.get(tempMessageId);
+          if (bubble) {
+            bubble.dataset.msgId = messageId;
+            tempBubbles.delete(tempMessageId);
+          }
+          // Add to cache as an AI message so room switch keeps it
+          if (activeRoom) {
+            const cached = messagesCache.get(activeRoom.id) || [];
+            if (!cached.find((m) => m.id === messageId)) {
+              const content = bubble?.querySelector('.msg-content')?.textContent || '';
+              cached.push({ id: messageId, roomId: activeRoom.id, userId: null, content, type: 'AI', createdAt: new Date().toISOString() });
+              messagesCache.set(activeRoom.id, cached);
+            }
+          }
+        });
+
+        socket.on('ai_audio_ready', ({ messageId, audioUrl }) => {
+          // Attach TTS audio player to the AI message bubble
+          const el = document.querySelector(`[data-msg-id="${messageId}"]`);
+          if (el && !el.querySelector('.msg-audio')) {
+            const audio = document.createElement('audio');
+            audio.controls = true;
+            audio.src = audioUrl;
+            audio.className = 'msg-audio';
+            audio.autoplay = true;
+            el.querySelector('.msg-bubble')?.appendChild(audio);
           }
         });
 
@@ -1456,28 +1735,95 @@
       }
 
       function buildMessageEl(msg, pending = false) {
-        const isMine = msg.userId === currentUser?.id;
-        const name = msg.user?.name || 'Unknown';
+        const isAi = msg.type === 'AI' || msg.userId === null;
+        const isVoice = msg.type === 'VOICE';
+        const isMine = !isAi && msg.userId === currentUser?.id;
+        const name = isAi ? '🤖 AI Assistant' : (msg.user?.name || 'Unknown');
         const time = new Date(msg.createdAt).toLocaleTimeString([], {
           hour: '2-digit',
           minute: '2-digit',
         });
+        const bgColor = isAi ? '#1a2a1a' : isMine ? '#2a3a5c' : '#1e1e1e';
+        const align = isAi ? 'flex-start' : isMine ? 'flex-end' : 'flex-start';
+
         const div = document.createElement('div');
-        div.style.cssText = `display:flex;flex-direction:column;align-items:${isMine ? 'flex-end' : 'flex-start'};padding:3px 20px`;
+        div.style.cssText = `display:flex;flex-direction:column;align-items:${align};padding:3px 20px`;
+
         // status dot: ● sending (grey), ✓ sent (dim), ✓✓ delivered (blue)
         const statusHtml = isMine
           ? `<span class="msg-status" style="font-size:10px;color:${pending ? '#555' : '#444'};margin-top:2px">${pending ? '● sending' : '✓'}</span>`
           : '';
+
+        const badgeHtml = isAi
+          ? `<div class="msg-type-badge">AI Assistant</div>`
+          : isVoice
+          ? `<div class="msg-type-badge">🎤 Voice</div>`
+          : '';
+
+        const bubble = document.createElement('div');
+        bubble.className = 'msg-bubble';
+        bubble.style.cssText = `max-width:70%;background:${bgColor};border-radius:10px;padding:8px 12px;font-size:14px;line-height:1.4;opacity:${pending ? '0.6' : '1'}`;
+
+        const contentEl = document.createElement('span');
+        contentEl.className = 'msg-content';
+        contentEl.textContent = msg.content || '';
+        bubble.appendChild(contentEl);
+
+        // Audio player for VOICE messages
+        if (isVoice && msg.audioUrl) {
+          const audio = document.createElement('audio');
+          audio.controls = true;
+          audio.src = msg.audioUrl;
+          audio.className = 'msg-audio';
+          bubble.appendChild(audio);
+        }
+        // Audio player for AI messages with TTS
+        if (isAi && msg.audioUrl) {
+          const audio = document.createElement('audio');
+          audio.controls = true;
+          audio.src = msg.audioUrl;
+          audio.className = 'msg-audio';
+          bubble.appendChild(audio);
+        }
+
         div.innerHTML = `
           ${!isMine ? `<div style="font-size:11px;color:#555;margin-bottom:2px">${esc(name)}</div>` : ''}
-          <div style="max-width:70%;background:${isMine ? '#2a3a5c' : '#1e1e1e'};border-radius:10px;padding:8px 12px;font-size:14px;line-height:1.4;opacity:${pending ? '0.6' : '1'}">${esc(msg.content)}</div>
-          <div style="display:flex;gap:4px;align-items:center;margin-top:2px">
-            <span style="font-size:10px;color:#444">${time}</span>
-            ${statusHtml}
-          </div>
+          ${badgeHtml}
         `;
+        div.appendChild(bubble);
+        const meta = document.createElement('div');
+        meta.style.cssText = 'display:flex;gap:4px;align-items:center;margin-top:2px';
+        meta.innerHTML = `<span style="font-size:10px;color:#444">${time}</span>${statusHtml}`;
+        div.appendChild(meta);
+
         if (msg.id) div.dataset.msgId = msg.id;
         return div;
+      }
+
+      // Temp bubble for AI streaming tokens
+      function buildAiTempBubble(tempMessageId) {
+        const div = document.createElement('div');
+        div.style.cssText = 'display:flex;flex-direction:column;align-items:flex-start;padding:3px 20px';
+        div.dataset.tempId = tempMessageId;
+        div.innerHTML = `<div style="font-size:11px;color:#555;margin-bottom:2px">🤖 AI Assistant</div>`;
+        const bubble = document.createElement('div');
+        bubble.className = 'msg-bubble';
+        bubble.style.cssText = 'max-width:70%;background:#1a2a1a;border-radius:10px;padding:8px 12px;font-size:14px;line-height:1.4';
+        const contentEl = document.createElement('span');
+        contentEl.className = 'msg-content';
+        contentEl.textContent = '';
+        bubble.appendChild(contentEl);
+        div.appendChild(bubble);
+        return div;
+      }
+
+      // Mark a message bubble as read by recipient (double-tick, green)
+      function markMessageRead(messageId) {
+        const el = document.querySelector(`[data-msg-id="${messageId}"] .msg-status`);
+        if (el) {
+          el.textContent = '✓✓';
+          el.style.color = '#4ade80';
+        }
       }
 
       function markMessageDelivered(msgId) {

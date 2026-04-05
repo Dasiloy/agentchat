@@ -5,7 +5,7 @@ services:
     runtime: node
     buildCommand: >-
       pnpm install --frozen-lockfile --prod=false &&
-      pnpm  build
+      NODE_OPTIONS=--max-old-space-size=460 pnpm build
     startCommand: node dist/main.js
     envVars:
       - key: NODE_ENV
