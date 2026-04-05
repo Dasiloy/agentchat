@@ -93,8 +93,8 @@ async function bootstrap() {
 
   app.enableShutdownHooks();
 
-  const port = parseInt(configService.get('PORT') ?? '4000', 10);
-  app.listen(port, '0.0.0.0', () => {
+  const port = process.env.PORT || 3000;
+  await app.listen(port, '0.0.0.0', () => {
     logger.log(`Running on port ${port}`);
   });
 }
