@@ -54,7 +54,7 @@ A real-time team workspace backend with an on-demand AI assistant. Built with Ne
 
 | Concern       | Choice                        | Why                                                                           |
 | ------------- | ----------------------------- | ----------------------------------------------------------------------------- |
-| Framework     | NestJS + TypeScript           | Module system, DI, guards, gateways all used deliberately                     |
+| Frameworks    | NestJS + TypeScript           | Module system, DI, guards, gateways all used deliberately                     |
 | Real-time     | Socket.io + Redis Adapter     | Named rooms, auto-reconnect, multi-instance pub/sub built in                  |
 | Database      | PostgreSQL + Prisma           | Relational model fits chat data. Typed ORM. Cursor pagination.                |
 | Cache         | Redis (ioredis)               | Ephemeral state (typing, presence) never touches PostgreSQL                   |
