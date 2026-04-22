@@ -35,7 +35,7 @@ async function bootstrap() {
   const configService = app.get<ConfigService>(ConfigService);
 
   // Serve test client at /
-  app.useStaticAssets(join(process.cwd(), 'test-client'));
+  app.useStaticAssets(join(__dirname, '..', 'test-client'));
 
   /// MIDDLEWARES
   app.enableCors({
