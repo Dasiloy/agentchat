@@ -1,5 +1,4 @@
 import 'dotenv/config';
-import { join } from 'path';
 
 import helmet from 'helmet';
 import { createAdapter } from '@socket.io/redis-adapter';
@@ -35,7 +34,7 @@ async function bootstrap() {
   const configService = app.get<ConfigService>(ConfigService);
 
   // Serve test client at /
-  app.useStaticAssets(join(__dirname, '..', 'test-client'));
+  app.useStaticAssets(__dirname);
 
   /// MIDDLEWARES
   app.enableCors({
