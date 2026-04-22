@@ -423,7 +423,6 @@ cp .env.example .env
 | `JWT_SECRET`                      | `some-very-long-random-string`   | Signing secret for JWTs                           |
 | `JWT_SECRET_EXPIRATION`           | `86400s`                         | Token lifetime (e.g. `86400s` = 24 h)             |
 | `JWT_REFRESH_TOKEN_EXPIRATION`    | `604800s`                        | Refresh token lifetime (7 days)                   |
-| `AES_KEY`                         | `32-char-hex-string`             | AES-256 key for any at-rest encryption            |
 | `AUTH_GOOGLE_ID`                  | `xxx.apps.googleusercontent.com` | Google OAuth client ID                            |
 | `AUTH_GOOGLE_SECRET`              | `GOCSPX-xxx`                     | Google OAuth client secret                        |
 | `CLOUDINARY_URL`                  | `cloudinary://key:secret@cloud`  | Cloudinary SDK URL (from dashboard)               |

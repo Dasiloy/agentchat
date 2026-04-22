@@ -35,7 +35,6 @@ import { VoiceModule } from './voice/voice.module';
         AUTH_GOOGLE_ID: Joi.string().required(),
         AUTH_GOOGLE_SECRET: Joi.string().required(),
         PORT: Joi.string().required(),
-        AES_KEY: Joi.string().required(),
         JWT_SECRET: Joi.string().required(),
         JWT_SECRET_EXPIRATION: Joi.string().required(),
         JWT_REFRESH_TOKEN_EXPIRATION: Joi.string().required(),
